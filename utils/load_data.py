@@ -86,3 +86,36 @@ def load_md_from_file(path: str, nrows=10000, btc=True) -> List[MdUpdate]:
     books = load_books(path, nrows, btc)
     trades = load_trades(path, nrows)
     return merge_books_and_trades(books, trades)
+
+def load_md_from_csv(csv_books, csv_trades, num_rows=-1) -> List[MdUpdate]:
+    if num_rows > 0:
+        df_books = pd.read_csv(csv_books, nrows=num_rows)
+    else: 
+        df_books = pd.read_csv(csv_books)
+
+    df_books['receive_ts'] = pd.to_datetime(df_books['receive_ts']).map(pd.Timestamp.timestamp)
+    df_books['exchange_ts'] = pd.to_datetime(df_books['exchange_ts']).map(pd.Timestamp.timestamp)
+    receive_ts = df_books.receive_ts.values
+    exchange_ts = df_books.exchange_ts.values
+    asks = [list(zip(df_books[f"ask_price_{i}"], df_books[f"ask_vol_{i}"])) for i in range(10)]
+    asks = [[asks[i][j] for i in range(len(asks))] for j in range(len(asks[0]))]
+    bids = [list(zip(df_books[f"bid_price_{i}"], df_books[f"bid_vol_{i}"])) for i in range(10)]
+    bids = [[bids[i][j] for i in range(len(bids))] for j in range(len(bids[0]))]
+
+    books = list(OrderbookSnapshotUpdate(*args) for args in zip(exchange_ts, receive_ts, asks, bids))
+
+    if num_rows > 0: 
+        df_trades = pd.read_csv(csv_trades, nrows=num_rows)
+    else:
+        df_trades = pd.read_csv(csv_trades)
+
+    df_trades['receive_ts'] = pd.to_datetime(df_trades['receive_ts']).map(pd.Timestamp.timestamp)
+    df_trades['exchange_ts'] = pd.to_datetime(df_trades['exchange_ts']).map(pd.Timestamp.timestamp)
+    df_trades = df_trades[['exchange_ts', 'receive_ts', 'aggro_side', 'size', 'price']].sort_values(
+        ["exchange_ts", 'receive_ts'])
+    receive_ts = df_trades.receive_ts.values
+    exchange_ts = df_trades.exchange_ts.values
+
+    trades = [AnonTrade(*args) for args in df_trades.values]
+
+    return merge_books_and_trades(books, trades)

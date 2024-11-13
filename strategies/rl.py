@@ -8,9 +8,42 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils import clip_grad_norm_
 import wandb
+import random
 
 from simulator.simulator import MdUpdate, Order, OwnTrade, Sim, update_best_positions
+from datetime import datetime
 
+
+def weighted_random_index(n, method='exponential', bias=2.0):
+    """
+    从列表中随机选择索引，偏向于选择尾部的元素
+    
+    参数:
+        lst: 输入列表
+        method: 使用的方法 ('exponential' 或 'linear')
+        bias: 偏向程度，值越大越倾向于选择尾部元素
+        
+    返回:
+        选中的索引
+    """
+    if n == 0:
+        raise ValueError("列表不能为空")
+    
+    if method == 'exponential':
+        # 使用指数函数生成权重
+        weights = [np.exp(bias * i / n) for i in range(n)]
+    elif method == 'linear':
+        # 使用线性函数生成权重
+        weights = [1 + (bias * i / n) for i in range(n)]
+    else:
+        raise ValueError("不支持的方法")
+    
+    # 归一化权重
+    total = sum(weights)
+    weights = [w/total for w in weights]
+    
+    # 根据权重随机选择索引
+    return weights     
 
 class A2CNetwork(nn.Module):
     '''
@@ -142,15 +175,15 @@ class RLStrategy:
         """
         self.policy = policy
         self.features_df = ess_df
-        self.features_df['inventory_ratio'] = 0
-        self.features_df['tpnl'] = 0
-        self.means = np.broadcast_to(means, (300, 57)).T
-        self.stds = np.broadcast_to(stds, (300, 57)).T
+        #self.features_df['inventory_ratio'] = 0
+        #self.features_df['tpnl'] = 0
+        self.means = np.broadcast_to(means, (300, means.shape[0])).T
+        self.stds = np.broadcast_to(stds, (300, stds.shape[0])).T
         self.max_position = max_position
 
         self.delay = delay
         if hold_time is None:
-            hold_time = min(delay * 5, pd.Timedelta(10, 's').delta)
+            hold_time = min(delay * 5, pd.Timedelta(10, 's').total_seconds())
         self.hold_time = hold_time
 
         self.coin_position = 0
@@ -174,11 +207,9 @@ class RLStrategy:
         self.taker_fee = taker_fee
         self.maker_fee = maker_fee
 
-    #         self.results = {'receive_ts': [], 'coin_pos': [], 'pnl': [], 'mid_price': []}
-
     def reset(self):
-        self.features_df['inventory_ratio'] = 0
-        self.features_df['tpnl'] = 0
+        self.features_df['inventory_ratio'] = 0.0
+        self.features_df['tpnl'] = 0.0
 
         self.coin_position = 0
         self.realized_pnl = 0
@@ -201,9 +232,10 @@ class RLStrategy:
         ] = (inventory_ratio, tpnl)
 
     def get_features(self, receive_ts):
+        # TODO: WHY ONLY 10 SECONDS AS A FEATURE WINDOW? TOO SMALL?
         features = self.features_df[
-            (self.features_df['receive_ts'] <= pd.to_datetime(receive_ts)) &
-            (self.features_df['receive_ts'] >= (pd.to_datetime(receive_ts) - timedelta(seconds=10)))
+            (self.features_df['receive_ts'] <= pd.to_datetime(receive_ts, unit='s')) &
+            (self.features_df['receive_ts'] >= (pd.to_datetime(receive_ts, unit='s') - timedelta(seconds=10)))
             ].drop(columns='receive_ts').values.T
 
         if features.shape[1] < 300:
@@ -214,7 +246,7 @@ class RLStrategy:
         elif features.shape[1] > 300:
             features = features[:, -300:]
 
-        return (features - self.means) / self.stds
+        return np.divide(features - self.means, self.stds, out=np.zeros_like(features), where=self.stds != 0)
 
     def place_order(self, sim, action_id, receive_ts, asks, bids):
         if action_id == 0:
@@ -241,7 +273,7 @@ class RLStrategy:
 
         self.actions_history.append((receive_ts, self.coin_position, action_id))
 
-    def run(self, sim: Sim, mode: str, count=1000) -> \
+    def run(self, sim: Sim, mode: str, traj_size=1000) -> \
             Tuple[List[OwnTrade], List[MdUpdate], List[Union[OwnTrade, MdUpdate]], List[Order]]:
         """
             This function runs simulation
@@ -270,8 +302,9 @@ class RLStrategy:
         # orders that have not been executed/canceled yet
         prev_total_pnl = None
         if mode != 'train':
-            count = 1e8
-        while len(self.trajectory['rewards']) < count:
+            traj_size = 1e8
+       
+        while len(self.trajectory['rewards']) < traj_size:
             # get update from simulator
             receive_ts, updates = sim.tick()
             if updates is None:
@@ -329,14 +362,14 @@ class RLStrategy:
             #             self.results['mid_price'].append((best_ask + best_bid) / 2)
 
             self.add_ass_features(receive_ts)
-
+            
             if receive_ts - prev_time >= self.delay:
                 if mode == 'train':
                     if prev_total_pnl is None:
                         prev_total_pnl = 0
                         prev_coin_pos = 0
                     else:
-                        if self.coin_position <= 0.2:
+                        if self.coin_position <= 0.2: #TODO: 0.2 MAGIC NUMBER?
                             reward = (
                                 self.realized_pnl + self.unrealized_pnl - prev_total_pnl -
                                 0.1 * abs(self.coin_position)
@@ -359,6 +392,7 @@ class RLStrategy:
 
                 prev_time = receive_ts
 
+
             to_cancel = []
             for ID, (order, order_type) in self.ongoing_orders.items():
                 if order.place_ts < receive_ts - self.hold_time:
@@ -370,6 +404,11 @@ class RLStrategy:
         if mode == 'train':
             for transform in self.transforms:
                 transform(self.trajectory, [features])
+        
+        if len(md_list) > 0: 
+            print("[%s] MODE RUN IN RANGE [%s, %s]" % (mode.upper(), datetime.fromtimestamp(md_list[0].receive_ts), datetime.fromtimestamp(md_list[-1].receive_ts)))
+        else:
+            print("[%s] MODE BUT EMPTY RUN AT %s" % (mode.upper(), ))
 
         return trades_list, md_list, updates_list, self.actions_history, self.trajectory
 
@@ -400,6 +439,7 @@ class A2C:
         total_loss = self.value_loss_coef * critic_loss - policy_loss - self.entropy_coef * entropy_loss
 
         # log all losses
+        """
         wandb.log({
             'total loss': total_loss.detach().item(),
             'policy loss': policy_loss.detach().item(),
@@ -407,17 +447,27 @@ class A2C:
             'entropy loss': entropy_loss.detach().item(),
             'train reward': np.mean(trajectory['rewards'])
         })
+        print({
+            'total loss': total_loss.detach().item(),
+            'policy loss': policy_loss.detach().item(),
+            'critic loss': critic_loss.detach().item(),
+            'entropy loss': entropy_loss.detach().item(),
+            'train reward': np.mean(trajectory['rewards'])
+        })
+        """
 
         return total_loss
 
-    def train(self, strategy, md, latency, md_latency, train_slice=1_000_000, count=1000):
+    def train(self, strategy, md, latency, datency, traj_size=1000):
         # collect trajectory using runner
         # compute loss and perform one step of gradient optimization
         # do not forget to clip gradients
         strategy.reset()
-        random_slice = np.random.randint(1_000, train_slice)
-        sim = Sim(md[random_slice:], latency, md_latency)
-        trades_list, md_list, updates_list, actions_history, trajectory = strategy.run(sim, mode='train', count=count)
+        random_slice = random.choices(range(len(md)-traj_size), weights=weighted_random_index(len(md)-traj_size, method='exponential', bias=np.log(1.5)))[0] # RANDOM CHOICE IN [0:md_size - traj_size]
+        #random_slice = np.random.randint(000, 195_000)
+        #random_slice = 179352
+        sim = Sim(md[random_slice:], latency, datency)
+        trades_list, md_list, updates_list, actions_history, trajectory = strategy.run(sim, mode='train', traj_size=traj_size)
 
         self.last_trajectories = trajectory
 
@@ -428,9 +478,9 @@ class A2C:
         self.optimizer.step()
 
 
-def evaluate(strategy, md, latency, md_latency):
+def evaluate(strategy, md, latency, datency):
     strategy.reset()
-    sim = Sim(md, latency, md_latency)
+    sim = Sim(md, latency, datency)
     with torch.no_grad():
         trades_list, md_list, updates_list, actions_history, trajectory = strategy.run(sim, mode='test')
 

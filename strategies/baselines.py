@@ -24,7 +24,7 @@ class BestPosStrategy:
         """
         self.delay = delay
         if hold_time is None:
-            hold_time = min(delay * 5, pd.Timedelta(10, 's').delta)
+            hold_time = min(delay * 5, pd.Timedelta(10, 's').total_seconds())
         self.hold_time = hold_time
         self.max_position = max_position
         self.trade_size = trade_size
@@ -129,7 +129,7 @@ class StoikovStrategy:
         '''
         self.delay = delay
         if hold_time is None:
-            hold_time = max( delay * 5, pd.Timedelta(10, 's').delta)
+            hold_time = max( delay * 5, pd.Timedelta(10, 's').total_seconds())
         self.hold_time = hold_time
         self.order_size = trade_size
         self.last_mid_prices = []
@@ -318,7 +318,7 @@ class StoikovStrategy_old:
         self.trade_size = trade_size
         self.delay = delay
         if hold_time is None:
-            hold_time = min(delay * 5, pd.Timedelta(10, 's').delta)
+            hold_time = min(delay * 5, pd.Timedelta(10, 's').total_seconds())
         self.hold_time = hold_time
 
         # market data list
@@ -337,7 +337,7 @@ class StoikovStrategy_old:
 
         self.volatility = initial_vol
         self.lamb = lamb
-        self.vol_freq = pd.Timedelta(vol_freq, 's').delta
+        self.vol_freq = pd.Timedelta(vol_freq, 's').total_seconds()
         self.reservation_price = None
         self.spread = None
         self.k = k
@@ -349,7 +349,9 @@ class StoikovStrategy_old:
         self.volatility = self.lamb * self.volatility + (1 - self.lamb) * ret ** 2
 
     def update_reservation_price(self) -> None:
-        time_to_terminal = (self.terminal_date - pd.to_datetime(self.current_time)).delta / self.vol_freq
+        breakpoint()
+        #TODO: make sure pd.to_datetime's unit
+        time_to_terminal = (self.terminal_date - pd.to_datetime(self.current_time)).total_seconds() / self.vol_freq
 
         self.reservation_price = (
                 self.current_midprice - (self.coin_position / self.trade_size)
@@ -357,7 +359,10 @@ class StoikovStrategy_old:
         )
 
     def update_spread(self) -> None:
-        time_to_terminal = (self.terminal_date - pd.to_datetime(self.current_time)).delta / self.vol_freq
+        breakpoint()
+        #TODO: make sure pd.to_datetime's unit
+
+        time_to_terminal = (self.terminal_date - pd.to_datetime(self.current_time)).total_seconds() / self.vol_freq
 
         self.spread = (
                 self.risk_preference * self.volatility * time_to_terminal +
@@ -454,6 +459,8 @@ class StoikovStrategy_old:
 
         df = pd.DataFrame([time, pos, bid, mid, reservation, ask]).T
         df.columns = ['time', 'pos', 'bid', 'mid', 'reservation', 'ask']
+        breakpoint()
+        #TODO: MAKE SURE df["receive_ts"] IS DATETIME
         df['time'] = pd.to_datetime(df['time'])
         df.set_index('time', inplace=True)
 
@@ -519,7 +526,7 @@ class LimitMarketStrategy:
         self.trade_size = trade_size
         self.delay = delay
         if hold_time is None:
-            hold_time = min(delay * 5, pd.Timedelta(10, 's').delta)
+            hold_time = min(delay * 5, pd.Timedelta(10, 's').total_seconds())
         self.hold_time = hold_time
 
         # market data list
@@ -650,7 +657,7 @@ class StoikovStrategyGeneralizedSingleAsset:
         self.k = k
         self.A = A
         if hold_time is None:
-            hold_time = max(delay * 5, pd.Timedelta(10, 's').delta )
+            hold_time = max(delay * 5, pd.Timedelta(10, 's').total_seconds() )
         self.hold_time = hold_time
         self.order_size = trade_size
         self.last_mid_prices = []
@@ -669,6 +676,9 @@ class StoikovStrategyGeneralizedSingleAsset:
 
         df = pd.DataFrame([time, pos, bid, mid, ask]).T
         df.columns = ['time', 'pos', 'bid', 'mid', 'ask']
+        breakpoint()
+        #TODO: MAKE SURE df["time"] IS DATETIME
+
         df['time'] = pd.to_datetime(df['time'])
         df.set_index('time', inplace=True)
 

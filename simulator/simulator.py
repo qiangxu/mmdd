@@ -96,12 +96,12 @@ def update_best_positions(best_bid, best_ask, md:MdUpdate, levels:bool = False) 
 
 
 class Sim:
-    def __init__(self, market_data: List[MdUpdate], execution_latency: float, md_latency: float) -> None:
+    def __init__(self, market_data: List[MdUpdate], execution_latency: float, datency: float) -> None:
         '''
             Args:
                 market_data(List[MdUpdate]): market data
                 execution_latency(float): latency in nanoseconds
-                md_latency(float): latency in nanoseconds
+                datency(float): latency in nanoseconds
         '''   
         #transform md to queue
         self.md_queue = deque( market_data )
@@ -119,7 +119,7 @@ class Sim:
         self.trade_id = 0
         #latency
         self.latency = execution_latency
-        self.md_latency = md_latency
+        self.datency = datency
         #current bid and ask
         self.best_bid = -np.inf
         self.best_ask = np.inf
@@ -265,7 +265,7 @@ class Sim:
             executed_order = OwnTrade(
                 self.last_order.place_ts, # when we place the order
                 self.md.exchange_ts, #exchange ts
-                self.md.exchange_ts + self.md_latency, #receive ts
+                self.md.exchange_ts + self.datency, #receive ts
                 self.get_trade_id(), #trade id
                 self.last_order.order_id, 
                 self.last_order.side, 
@@ -310,7 +310,7 @@ class Sim:
                 executed_order = OwnTrade(
                     order.place_ts, # when we place the order
                     self.md.exchange_ts, #exchange ts
-                    self.md.exchange_ts + self.md_latency, #receive ts
+                    self.md.exchange_ts + self.datency, #receive ts
                     self.get_trade_id(), #trade id
                     order_id, order.side, order.size, executed_price, execute)
         
