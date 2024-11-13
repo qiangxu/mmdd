@@ -107,8 +107,8 @@ def train(dataset, features, means, stds):
         )
         res = {
         "PnL": PnL,
-        "from": datetime.fromtimestamp(dataset[0].receive_ts),
-        "to": datetime.fromtimestamp(dataset[-1].receive_ts), 
+        "from": datetime.fromtimestamp(dataset[0].receive_ts).strftime("%Y-%m-%dT%H-%M-%S.3f"),
+        "to": datetime.fromtimestamp(dataset[-1].receive_ts).strftime("%Y-%m-%dT%H-%M-%S.3f"), 
         "delay": DELAY, 
         "hold_time": HOLD_TIME, 
         "traj_size": TRAJ_SIZE, 
@@ -122,7 +122,7 @@ def train(dataset, features, means, stds):
         print(res)
         torch.save(model.state_dict(), "../models/rl_%s.pth" % "_".join([f"{k}_{v}" for k, v in sorted(res.items())]))
 
-def eval(checkpoint, dataset, features, means, stds):
+def test(checkpoint, dataset, features, means, stds):
     model = A2CNetwork(n_actions=10, DEVICE=device).to(device)
     model.load_state_dict(torch.load(checkpoint))
     model.eval()
@@ -329,7 +329,7 @@ def main():
     features, means, stds = prepare_features("../data/features.pickle")
     
     train(dataset[0:S+SS], features, means, stds)
-    evaluate(checkpoint, dataset[S:SS], features, means, stds)
+    test("", dataset[S:SS], features, means, stds)
 
 
 if __name__ == "__main__":

@@ -1,19 +1,19 @@
-# Reinforcement Learning in Market Making
+# 强化学习在做市中的应用
 
-This project focuses on utilizing reinforcement learning techniques to develop market-making strategies.
+本项目利用强化学习技术开发做市策略。
 
-## Overview
+## 概述
 
-- Created a trading simulator that includes execution and market data latencies, providing a more realistic testing environment for various market making strategies.
-- Implemented the Avellaneda-Stoikov strategy as a baseline for comparison and designed a deep reinforcement learning strategy using the Actor-Critic (A2C) algorithm.
-- Conducted extensive experiments on high-frequency data to demonstrate the effectiveness of the reinforcement learning approach, while also identifying its limitations.
+- 创建了包含执行和市场数据延迟的交易模拟器，为各种做市策略提供更真实的测试环境。
+- 实现了 Avellaneda-Stoikov 策略作为基准，并设计了基于 Actor-Critic (A2C) 算法的深度强化学习策略。
+- 在高频数据上进行大量实验，验证了强化学习方法的有效性，并指出了其局限性。
 
-## Baselines
+## 基准策略
 
-- Naive Strategy: At each time step, place buy and sell orders at the best available price level.
-- Avellaneda-Stoikov Strategy ([paper link](https://math.nyu.edu/~avellane/HighFrequencyTrading.pdf))
+- 简单策略：每个时间步在最佳价格水平下达买卖订单。
+- Avellaneda-Stoikov 策略（[论文链接](https://math.nyu.edu/~avellane/HighFrequencyTrading.pdf)）
 
-## RL Strategy
+## 强化学习策略
 
 ### Environment State Space
 
@@ -42,31 +42,33 @@ This project focuses on utilizing reinforcement learning techniques to develop m
 
 ![NN Architecture](images/readme/nn_architecture.png)
 
-## Experiments
 
-### Environment
+## 实验
 
-- Execution Latency: 10ms
-- Market Data Latency: 10ms
-- Maker Fee: -0.004%
-- All orders are Post-Only type
+### 环境
 
-### Methodology
+- 执行延迟：10ms
+- 市场数据延迟：10ms
+- 做市手续费：-0.004%
+- 所有订单均为仅挂单类型
 
-- Data:
-  - BTC/USDT: HFT data for June 23, 2022 (approximately 2.5 million snapshots)
-  - ETH/USDT: HFT data from January 2, 2023, to January 4, 2023 (approximately 1.3 million snapshots)
-- Train-Test Split:
-  - BTC/USDT: Train - first three hours of data, Test - remaining 21 hours
-  - ETH/USDT: Train - first six hours of data, Test - remaining 1 day and 13 hours
+### 方法
 
-### Results
+- 数据：
+  - BTC/USDT：2023年1月9日-20日的高频交易数据（约250万条快照）
+- 训练测试集划分：
+  - BTC/USDT：训练集为前三小时数据，测试集为剩余21小时数据
 
-- BTC: ![BTC Results](images/readme/btc_results.png)
-- ETH: ![ETH Results](images/readme/eth_results.png)
+### 结果
 
-## Conclusions
+- TODO
 
-- Developed a reinforcement learning-based strategy for market making.
-- Evaluated the effectiveness of the strategy on real-world data compared to two classical approaches: naive strategy and Avellaneda-Stoikov strategy.
-- Limitations of the RL approach include the need for algorithm training, which requires significant time and computational resources, a large number of hyperparameters that impact the final results and need to be tuned, and the inference speed of the RL strategy.
+## 结论
+
+- 开发了一种基于强化学习的做市策略。
+- 将该策略与简单策略和 Avellaneda-Stoikov 策略在真实数据上进行比较，评估了其有效性。
+- 强化学习策略的局限性包括：算法训练需大量时间和计算资源，超参数较多且需调优，推理速度受限。
+
+
+
+
