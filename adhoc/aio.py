@@ -33,15 +33,18 @@ from strategies.rl import (
     evaluate,
 )
 from utils.get_info import get_pnl, get_volumes
+from utils.load_data import load_md_from_csv
 from datetime import datetime
+from tqdm import tqdm
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-N = 50 # NUM OF EPOCHS
-S = 200_000 # TRAIN SIZE
-SS = 20_000 # EVALU SIZE, SHOULD BE CLOSE TO traj_size
+SEED=13
+N = 300 # NUM OF EPOCHS
+S = 500_000 # TRAIN SIZE
+SS = 50_000 # EVALU SIZE, SHOULD BE CLOSE TO traj_size
 #assert SS < S / 10
-TRAJ_SIZE = 1000 # N * traj_size << S 
+TRAJ_SIZE = 5000 # N * traj_size << S 
 DELAY = pd.Timedelta(0.1, "s").total_seconds()
 HOLD_TIME = pd.Timedelta(10, "s").total_seconds()
 LATENCY = pd.Timedelta(10, "ms").total_seconds()
@@ -49,8 +52,6 @@ DATENCY = pd.Timedelta(10, "ms").total_seconds()
 
 
 def preprocess_data(csv_books, csv_trades, num_rows=-1):
-    from utils.load_data import load_md_from_csv
-
     return load_md_from_csv(csv_books, csv_trades, num_rows=num_rows)
 
 
@@ -58,12 +59,11 @@ def train(dataset, features, means, stds):
     # TODO: HOW DELAY, HOLD_TIME AFFECT
     # TODO: n_actions=10
 
-    seed = 13
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
 
-    model = A2CNetwork(n_actions=10, DEVICE=device).to(device)
+    model = A2CNetwork(n_actions=10, device=DEVICE).to(DEVICE)
     policy = Policy(model)
 
 
@@ -84,11 +84,11 @@ def train(dataset, features, means, stds):
 
     optimizer = torch.optim.RMSprop(model.parameters(), lr=7e-4, alpha=0.99, eps=1e-5)
 
-    agent = A2C(policy, optimizer, value_loss_coef=0.25, entropy_coef=1, DEVICE=device)
+    agent = A2C(policy, optimizer, value_loss_coef=0.25, entropy_coef=1, device=DEVICE)
 
-
-
-    for i in range(1, N):  # TODO: WHY 301.
+    checkpoints = []
+    
+    for i in tqdm(range(1, N+1)): 
         agent.train(
             strategy,
             dataset[0:S],
@@ -97,33 +97,39 @@ def train(dataset, features, means, stds):
             traj_size=TRAJ_SIZE,
         ) 
 
-        #if i % 10 == 0:
-        breakpoint()
-        reward, PnL, trajectory = evaluate(
-            strategy,
-            dataset[S:],
-            latency=LATENCY, 
-            datency=DATENCY,
-        )
-        res = {
-        "PnL": PnL,
-        "from": datetime.fromtimestamp(dataset[0].receive_ts).strftime("%Y-%m-%dT%H-%M-%S.3f"),
-        "to": datetime.fromtimestamp(dataset[-1].receive_ts).strftime("%Y-%m-%dT%H-%M-%S.3f"), 
-        "delay": DELAY, 
-        "hold_time": HOLD_TIME, 
-        "traj_size": TRAJ_SIZE, 
-        "latency": LATENCY, 
-        "datency": DATENCY, 
-        "S": S, 
-        "SS": SS,
-        "num_ecphos": N, 
-        "epoch_i": i}
 
-        print(res)
-        torch.save(model.state_dict(), "../models/rl_%s.pth" % "_".join([f"{k}_{v}" for k, v in sorted(res.items())]))
+        if i % 50 == 0 or i == N:
+            reward, PnL, trajectory = evaluate(
+                strategy,
+                dataset[S:S+SS],
+                latency=LATENCY, 
+                datency=DATENCY,
+            )
+            res = {
+            "PnL": PnL,
+            "from": datetime.fromtimestamp(dataset[0].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"),
+            "to": datetime.fromtimestamp(dataset[-1].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"), 
+            "delay": DELAY, 
+            "hold_time": HOLD_TIME, 
+            "traj_size": TRAJ_SIZE, 
+            "latency": LATENCY, 
+            "datency": DATENCY, 
+            "S": S, 
+            "SS": SS,
+            "num_ecphos": N, 
+            "epoch_i": i}
+            print(res)
+
+            checkpoint = "../models/rl_%s.pth" % "_".join([f"{k}_{v}" for k, v in sorted(res.items())])
+            checkpoints.append(checkpoint)
+
+            torch.save(model.state_dict(), checkpoint)
+
+    return checkpoints
 
 def test(checkpoint, dataset, features, means, stds):
-    model = A2CNetwork(n_actions=10, DEVICE=device).to(device)
+    breakpoint()
+    model = A2CNetwork(n_actions=10, device=DEVICE).to(DEVICE)
     model.load_state_dict(torch.load(checkpoint))
     model.eval()
 
@@ -157,9 +163,9 @@ def test(checkpoint, dataset, features, means, stds):
         )
 
         res = {
-        #"PnL": PnL,
-        "from": datetime.fromtimestamp(dataset[0].receive_ts),
-        "to": datetime.fromtimestamp(dataset[-1].receive_ts), 
+        "PnL": strategy.realized_pnl + strategy.unrealized_pnl,
+        "from": datetime.fromtimestamp(dataset[0].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"),
+        "to": datetime.fromtimestamp(dataset[-1].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"), 
         "delay": DELAY, 
         "hold_time": HOLD_TIME, 
         "traj_size": TRAJ_SIZE, 
@@ -172,7 +178,7 @@ def test(checkpoint, dataset, features, means, stds):
         print(res)
         return trades_list, md_list, updates_list, actions_history, trajectory
 
-def visualize():
+def visualize(trades_list, md_list, updates_list, actions_history, trajectory):
     df = get_pnl(updates_list, post_only=True)
     breakpoint() 
     #TODO: MAKE SURE df["receive_ts"] IS DATETIME
@@ -318,19 +324,19 @@ def prepare_features(features_snapshot):
 
 
 def main():
-    breakpoint()
     dataset = preprocess_data(
-        "../data/books.csv", "../data/trades.csv", num_rows=3 * 195_000
+        "../data/books.csv", "../data/trades.csv", num_rows=3 * S
     )
-
-    assert len(dataset) > S
+        
+    print("TOTAL DATA UPDATES: %d" % len(dataset))
+    assert len(dataset) >= S + 2 * SS
     # dataset = preprocess_data("../data/books.csv", "../data/trades.csv")
 
     features, means, stds = prepare_features("../data/features.pickle")
     
-    train(dataset[0:S+SS], features, means, stds)
-    test("", dataset[S:SS], features, means, stds)
+    #checkpoints = train(dataset[0:S+SS], features, means, stds)
 
+    trades_list, md_list, updates_list, actions_history, trajectory = test(checkpoint, dataset[S:S+SS], features, means, stds)
 
 if __name__ == "__main__":
     main()

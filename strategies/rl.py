@@ -54,10 +54,10 @@ class A2CNetwork(nn.Module):
         V - tensor, critic estimation, (batch_size)
     '''
 
-    def __init__(self, n_actions, DEVICE="cpu"):
+    def __init__(self, n_actions, device="cpu"):
         super().__init__()
 
-        self.DEVICE = DEVICE
+        self.device = device
         self.backbone = nn.Sequential(
             nn.Flatten(),
             nn.Linear(300 * 57, 256),
@@ -81,7 +81,7 @@ class A2CNetwork(nn.Module):
             module.bias.data.zero_()
 
     def forward(self, state_t):
-        hidden_outputs = self.backbone(torch.as_tensor(np.array(state_t), dtype=torch.float).to(self.DEVICE))
+        hidden_outputs = self.backbone(torch.as_tensor(np.array(state_t), dtype=torch.float).to(self.device))
         # print(hidden_outputs.shape)
         return self.logits_net(hidden_outputs), self.V_net(hidden_outputs).squeeze()
 
@@ -414,23 +414,23 @@ class RLStrategy:
 
 
 class A2C:
-    def __init__(self, policy, optimizer, value_loss_coef=0.1, entropy_coef=0.1, max_grad_norm=0.5, DEVICE="cpu"):
+    def __init__(self, policy, optimizer, value_loss_coef=0.1, entropy_coef=0.1, max_grad_norm=0.5, device="cpu"):
         self.policy = policy
         self.optimizer = optimizer
         self.value_loss_coef = value_loss_coef
         self.entropy_coef = entropy_coef
         self.max_grad_norm = max_grad_norm
-        self.DEVICE = DEVICE
+        self.device = device
 
         self.last_trajectories = None
 
     def loss(self, trajectory):
         # compute all losses
         # do not forget to use weights for critic loss and entropy loss
-        trajectory['log_probs'] = torch.stack(trajectory['log_probs']).squeeze().to(self.DEVICE)
-        trajectory['value_targets'] = torch.stack(trajectory['value_targets']).to(self.DEVICE)
-        trajectory['values'] = torch.stack(trajectory['values']).to(self.DEVICE)
-        trajectory['entropy'] = torch.stack(trajectory['entropy']).to(self.DEVICE)
+        trajectory['log_probs'] = torch.stack(trajectory['log_probs']).squeeze().to(self.device)
+        trajectory['value_targets'] = torch.stack(trajectory['value_targets']).to(self.device)
+        trajectory['values'] = torch.stack(trajectory['values']).to(self.device)
+        trajectory['entropy'] = torch.stack(trajectory['entropy']).to(self.device)
 
         policy_loss = (trajectory['log_probs'] * (trajectory['value_targets'] - trajectory['values']).detach()).mean()
         critic_loss = ((trajectory['value_targets'].detach() - trajectory['values']) ** 2).mean()
@@ -463,9 +463,10 @@ class A2C:
         # compute loss and perform one step of gradient optimization
         # do not forget to clip gradients
         strategy.reset()
-        random_slice = random.choices(range(len(md)-traj_size), weights=weighted_random_index(len(md)-traj_size, method='exponential', bias=np.log(1.5)))[0] # RANDOM CHOICE IN [0:md_size - traj_size]
+        random_slice = random.choices(range(len(md)-traj_size), weights=weighted_random_index(len(md)-traj_size, method='exponential', bias=np.log(2.5)))[0] # RANDOM CHOICE IN [0:md_size - traj_size]
         #random_slice = np.random.randint(000, 195_000)
         #random_slice = 179352
+        print("[TRAIN] RANDOM SLICE: %d" % random_slice)
         sim = Sim(md[random_slice:], latency, datency)
         trades_list, md_list, updates_list, actions_history, trajectory = strategy.run(sim, mode='train', traj_size=traj_size)
 
