@@ -10,17 +10,21 @@ def get_pnl(updates_list: List[Union[MdUpdate, OwnTrade]], post_only=False, make
     '''
         This function calculates PnL from list of updates
     '''
+    
+    #TOOD: post_only STANDS FOR?
 
     # current position in btc and usd
     btc_pos, usd_pos = 0.0, 0.0
 
-    N = len(updates_list)
-    btc_pos_arr = np.zeros((N,))
-    usd_pos_arr = np.zeros((N,))
-    mid_price_arr = np.zeros((N,))
+    num_updates = len(updates_list)
+    btc_pos_arr = np.zeros((num_updates,))
+    usd_pos_arr = np.zeros((num_updates,))
+    mid_price_arr = np.zeros((num_updates,))
+    buy_or_sell = np.zeros((num_updates,))
     # current best_bid and best_ask
     best_bid: float = -np.inf
     best_ask: float = np.inf
+
 
     for i, update in enumerate(updates_list):
         if isinstance(update, MdUpdate):
@@ -36,9 +40,11 @@ def get_pnl(updates_list: List[Union[MdUpdate, OwnTrade]], post_only=False, make
                 if trade.side == 'BID':
                     btc_pos += trade.size
                     usd_pos -= (1 + maker_fee) * trade.price * trade.size
+                    buy_or_sell[i] = 1
                 elif trade.side == 'ASK':
                     btc_pos -= trade.size
                     usd_pos += (1 - maker_fee) * trade.price * trade.size
+                    buy_or_sell[i] = -1
             elif not post_only:
                 if update.execute == 'TRADE':
                     fee = maker_fee
@@ -49,9 +55,11 @@ def get_pnl(updates_list: List[Union[MdUpdate, OwnTrade]], post_only=False, make
                 if trade.side == 'BID':
                     btc_pos += trade.size
                     usd_pos -= (1 + fee) * trade.price * trade.size
+                    buy_or_sell[i] = 1
                 elif trade.side == 'ASK':
                     btc_pos -= trade.size
                     usd_pos += (1 - fee) * trade.price * trade.size
+                    buy_or_sell[i] = -1
 
             # current portfolio value
 
@@ -64,7 +72,7 @@ def get_pnl(updates_list: List[Union[MdUpdate, OwnTrade]], post_only=False, make
     exchange_ts = [update.exchange_ts for update in updates_list]
 
     df = pd.DataFrame({"exchange_ts": exchange_ts, "receive_ts": receive_ts, "total": worth_arr, "BTC": btc_pos_arr,
-                       "USD": usd_pos_arr, "mid_price": mid_price_arr})
+        "USD": usd_pos_arr, "mid_price": mid_price_arr, "buy": buy_or_sell})
     df = df.groupby('receive_ts').agg(lambda x: x.iloc[-1]).reset_index()
     return df
 
