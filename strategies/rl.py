@@ -167,7 +167,7 @@ class RLStrategy:
     def __init__(self, policy: Policy, ess_df: pd.DataFrame, max_position: float,
                  means, stds,
                  delay: float, hold_time: Optional[float] = None, transforms=[],
-                 trade_size=0.001, post_only=True, taker_fee=0.0004, maker_fee=-0.00004) -> None:
+                 trade_size=0.01, post_only=True, taker_fee=0.0004, maker_fee=-0.00004) -> None:
         """
             Args:
                 delay(float): delay between orders in nanoseconds
@@ -186,7 +186,7 @@ class RLStrategy:
             hold_time = min(delay * 5, pd.Timedelta(10, 's').total_seconds())
         self.hold_time = hold_time
 
-        self.coin_position = 0
+        self.coin_position = 1
         self.realized_pnl = 0
         self.unrealized_pnl = 0
 
@@ -203,17 +203,21 @@ class RLStrategy:
         self.transforms = transforms
 
         self.trade_size = trade_size
+
         self.post_only = post_only
         self.taker_fee = taker_fee
         self.maker_fee = maker_fee
+
+        #FEATURE
 
     def reset(self):
         self.features_df['inventory_ratio'] = 0.0
         self.features_df['tpnl'] = 0.0
 
-        self.coin_position = 0
+        self.coin_position = 1
         self.realized_pnl = 0
         self.unrealized_pnl = 0
+
 
         self.actions_history = []
         self.ongoing_orders = {}
@@ -264,14 +268,27 @@ class RLStrategy:
         #             else:
         #                 return
         else:
+            #FEATURE
             ask_level, bid_level = self.action_dict[action_id]
-            ask_order = sim.place_order(receive_ts, self.trade_size, 'ASK', asks[ask_level])
-            bid_order = sim.place_order(receive_ts, self.trade_size, 'BID', bids[bid_level])
 
-            self.ongoing_orders[bid_order.order_id] = (bid_order, 'LIMIT')
-            self.ongoing_orders[ask_order.order_id] = (ask_order, 'LIMIT')
+            ask_cost = self.trade_size 
+            bid_cost = bids[bid_level] * self.trade_size * (1 + self.taker_fee)
+          
+            to_place_ask = self.coin_position >= ask_cost
+            to_place_bid = self.realized_pnl >= bid_cost
 
-        self.actions_history.append((receive_ts, self.coin_position, action_id))
+            if to_place_ask: 
+                ask_order = sim.place_order(receive_ts, self.trade_size, 'ASK', asks[ask_level])
+                self.ongoing_orders[ask_order.order_id] = (ask_order, 'LIMIT')
+
+            if to_place_bid: 
+                bid_order = sim.place_order(receive_ts, self.trade_size, 'BID', bids[bid_level])
+                self.ongoing_orders[bid_order.order_id] = (bid_order, 'LIMIT')
+        
+            if not (to_place_ask or to_place_bid): 
+                return 
+
+            self.actions_history.append((receive_ts, self.coin_position, action_id))
 
     def run(self, sim: Sim, mode: str, traj_size=1000) -> \
             Tuple[List[OwnTrade], List[MdUpdate], List[Union[OwnTrade, MdUpdate]], List[Order]]:
@@ -334,6 +351,7 @@ class RLStrategy:
                                 self.realized_pnl += (1 - self.maker_fee) * update.price * update.size
                             self.unrealized_pnl = self.coin_position * ((best_ask + best_bid) / 2)
                         elif order_type == 'MARKET':
+                            breakpoint()
                             if update.side == 'BID':
                                 self.coin_position += update.size
                                 self.realized_pnl -= (1 + self.taker_fee) * update.price * update.size

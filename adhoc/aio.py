@@ -334,16 +334,11 @@ def main():
 
     features, means, stds = prepare_features("../data/features.pickle")
     
-    #checkpoints = train(dataset[0:S+SS], features, means, stds)
-    checkpoint = "../models/rl_PnL_1175.6750284805894_S_500000_SS_50000_datency_0.01_delay_0.1_epoch_i_200_from_2023-01-09T08-00-00_hold_time_10.0_latency_0.01_num_ecphos_300_to_2023-01-13T16-21-33_traj_size_5000.pth"
-    trades_list, md_list, updates_list, actions_history, trajectory = test(checkpoint, dataset[S:S+2000], features, means, stds)
-    breakpoint()
-    df = get_pnl(updates_list, post_only=True)
-    df = get_pnl(updates_list, post_only=True)
-    df = get_pnl(updates_list, post_only=True)
-    df = get_pnl(updates_list, post_only=True)
-    df = get_pnl(updates_list, post_only=True)
-    df = get_pnl(updates_list, post_only=True)
+    checkpoints = train(dataset[0:S+SS], features, means, stds)
+    #checkpoint = "../models/rl_PnL_1175.6750284805894_S_500000_SS_50000_datency_0.01_delay_0.1_epoch_i_200_from_2023-01-09T08-00-00_hold_time_10.0_latency_0.01_num_ecphos_300_to_2023-01-13T16-21-33_traj_size_5000.pth"
+    #trades_list, md_list, updates_list, actions_history, trajectory = test(checkpoint, dataset[S:S+2000], features, means, stds)
+    #breakpoint()
+    #df = get_pnl(updates_list, post_only=True)
 
 if __name__ == "__main__":
     main()
