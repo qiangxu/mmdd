@@ -40,7 +40,7 @@ from tqdm import tqdm
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 SEED=13
-N = 300 # NUM OF EPOCHS
+N = 3000 # NUM OF EPOCHS
 S = 500_000 # TRAIN SIZE
 SS = 50_000 # EVALU SIZE, SHOULD BE CLOSE TO traj_size
 #assert SS < S / 10
@@ -65,7 +65,6 @@ def train(dataset, features, means, stds):
 
     model = A2CNetwork(n_actions=10, device=DEVICE).to(DEVICE)
     policy = Policy(model)
-
 
     strategy = RLStrategy(
         policy,
@@ -97,16 +96,15 @@ def train(dataset, features, means, stds):
             traj_size=TRAJ_SIZE,
         ) 
 
-
-        if i % 50 == 0 or i == N:
+        if (i-1) % 50 == 0 or i == N:
             reward, PnL, trajectory = evaluate(
                 strategy,
-                dataset[S:S+SS],
+                dataset[S:],
                 latency=LATENCY, 
                 datency=DATENCY,
             )
             res = {
-            "PnL": PnL,
+            "PnL": PnL, 
             "from": datetime.fromtimestamp(dataset[0].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"),
             "to": datetime.fromtimestamp(dataset[-1].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"), 
             "delay": DELAY, 
@@ -128,7 +126,6 @@ def train(dataset, features, means, stds):
     return checkpoints
 
 def test(checkpoint, dataset, features, means, stds):
-    breakpoint()
     model = A2CNetwork(n_actions=10, device=DEVICE).to(DEVICE)
     model.load_state_dict(torch.load(checkpoint))
     model.eval()
@@ -157,13 +154,12 @@ def test(checkpoint, dataset, features, means, stds):
         datency=DATENCY,
     )
     with torch.no_grad():
-
         trades_list, md_list, updates_list, actions_history, trajectory = strategy.run(
             sim, mode="test"
         )
 
         res = {
-        "PnL": strategy.realized_pnl + strategy.unrealized_pnl,
+        "PnL": strategy.tpnl, 
         "from": datetime.fromtimestamp(dataset[0].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"),
         "to": datetime.fromtimestamp(dataset[-1].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"), 
         "delay": DELAY, 
@@ -311,7 +307,7 @@ def prepare_features(features_snapshot):
         .reset_index()
         .rename(columns={"index": "receive_ts"})
     )
-    features["inventory_ratio"] = 0.0
+    features["coin_position"] = 0.0
     features["tpnl"] = 0.0
 
 
@@ -335,8 +331,8 @@ def main():
     features, means, stds = prepare_features("../data/features.pickle")
     
     checkpoints = train(dataset[0:S+SS], features, means, stds)
-    #checkpoint = "../models/rl_PnL_1175.6750284805894_S_500000_SS_50000_datency_0.01_delay_0.1_epoch_i_200_from_2023-01-09T08-00-00_hold_time_10.0_latency_0.01_num_ecphos_300_to_2023-01-13T16-21-33_traj_size_5000.pth"
-    #trades_list, md_list, updates_list, actions_history, trajectory = test(checkpoint, dataset[S:S+2000], features, means, stds)
+    #checkpoint = "../models/rl_PnL_0_S_500000_SS_50000_datency_0.01_delay_0.1_epoch_i_900_from_2023-01-09T08-00-00_hold_time_10.0_latency_0.01_num_ecphos_3000_to_2023-01-13T16-21-33_traj_size_5000.pth"
+    trades_list, md_list, updates_list, actions_history, trajectory = test(checkpoint, dataset[S:S+2000], features, means, stds)
     #breakpoint()
     #df = get_pnl(updates_list, post_only=True)
 
