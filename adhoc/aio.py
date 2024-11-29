@@ -96,33 +96,37 @@ def train(dataset, features, means, stds):
             traj_size=TRAJ_SIZE,
         ) 
 
-        if (i-1) % 50 == 0 or i == N:
-            reward, PnL, trajectory = evaluate(
+        if ((i > 9) and (i-1) % 1 == 0) or i == N:
+            reward, balance, trajectory = evaluate(
                 strategy,
                 dataset[S:],
                 latency=LATENCY, 
                 datency=DATENCY,
             )
             res = {
-            "PnL": PnL, 
-            "from": datetime.fromtimestamp(dataset[0].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"),
-            "to": datetime.fromtimestamp(dataset[-1].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"), 
-            "delay": DELAY, 
-            "hold_time": HOLD_TIME, 
-            "traj_size": TRAJ_SIZE, 
-            "latency": LATENCY, 
-            "datency": DATENCY, 
-            "S": S, 
-            "SS": SS,
-            "num_ecphos": N, 
-            "epoch_i": i}
+                "coin": balance[0],
+                "usdt": balance[1], 
+                "price": balance[2], 
+                "PnL": balance[3], 
+                "from": datetime.fromtimestamp(dataset[0].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"),
+                "to": datetime.fromtimestamp(dataset[-1].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"), 
+                "delay": DELAY, 
+                "hold_time": HOLD_TIME, 
+                "traj_size": TRAJ_SIZE, 
+                "latency": LATENCY, 
+                "datency": DATENCY, 
+                "S": S, 
+                "SS": SS,
+                "num_ecphos": N, 
+                "epoch_i": i,
+                }
             print(res)
-
+            
+            # breakpoint()
             checkpoint = "../models/rl_%s.pth" % "_".join([f"{k}_{v}" for k, v in sorted(res.items())])
             checkpoints.append(checkpoint)
 
             torch.save(model.state_dict(), checkpoint)
-
     return checkpoints
 
 def test(checkpoint, dataset, features, means, stds):
@@ -141,7 +145,7 @@ def test(checkpoint, dataset, features, means, stds):
         DELAY,
         HOLD_TIME,
         [ComputeValueTargets(policy)],
-        trade_size=0.01,
+        trade_size=0.001,
         post_only=True,
         taker_fee=0.0004,
         maker_fee=-0.00004,
@@ -153,26 +157,6 @@ def test(checkpoint, dataset, features, means, stds):
         execution_latency=LATENCY,
         datency=DATENCY,
     )
-    with torch.no_grad():
-        trades_list, md_list, updates_list, actions_history, trajectory = strategy.run(
-            sim, mode="test"
-        )
-
-        res = {
-        "PnL": strategy.tpnl, 
-        "from": datetime.fromtimestamp(dataset[0].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"),
-        "to": datetime.fromtimestamp(dataset[-1].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"), 
-        "delay": DELAY, 
-        "hold_time": HOLD_TIME, 
-        "traj_size": TRAJ_SIZE, 
-        "latency": LATENCY, 
-        "datency": DATENCY, 
-        "S": S, 
-        "SS": SS,
-        }
-
-        print(res)
-        return trades_list, md_list, updates_list, actions_history, trajectory
 
 def visualize(trades_list, md_list, updates_list, actions_history, trajectory):
     df = get_pnl(updates_list, post_only=True)
@@ -308,7 +292,6 @@ def prepare_features(features_snapshot):
         .rename(columns={"index": "receive_ts"})
     )
     features["coin_position"] = 0.0
-    features["tpnl"] = 0.0
 
 
     means_dict = features.mean(numeric_only=True).to_dict()
@@ -321,7 +304,7 @@ def prepare_features(features_snapshot):
 
 def main():
     dataset = preprocess_data(
-        "../data/books.csv", "../data/trades.csv", num_rows=3 * S
+        "../data/books.csv", "../data/trades.csv", num_rows=S+3*SS
     )
         
     print("TOTAL DATA UPDATES: %d" % len(dataset))

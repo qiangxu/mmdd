@@ -60,7 +60,7 @@ class A2CNetwork(nn.Module):
         self.device = device
         self.backbone = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(300 * 57, 256),
+            nn.Linear(30 * 56, 256),
             nn.ReLU()
         )
         self.logits_net = nn.Sequential(
@@ -148,6 +148,8 @@ class ComputeValueTargets:
 
         value_targets = [self.policy.act(latest_observation)["values"]]
 
+        print("[TRAIN] REWARDS: ", np.sum(trajectory['rewards']))
+
         for step in range(len(trajectory['values']) - 2, -1, -1):
             value_targets.append(
                 self.gamma * value_targets[-1] + trajectory['rewards'][step]
@@ -175,18 +177,14 @@ class RLStrategy:
         """
         self.policy = policy
         self.features_df = ess_df
-        self.means = np.broadcast_to(means, (300, means.shape[0])).T
-        self.stds = np.broadcast_to(stds, (300, stds.shape[0])).T
+        self.means = np.broadcast_to(means, (30, means.shape[0])).T
+        self.stds = np.broadcast_to(stds, (30, stds.shape[0])).T
         self.max_position = max_position
 
         self.delay = delay
         if hold_time is None:
             hold_time = min(delay * 5, pd.Timedelta(10, 's').total_seconds())
         self.hold_time = hold_time
-
-        self.coin_position = 1.0
-        self.usdt_position = 0.0
-        self.tpnl = 1.0
 
         self.action_dict = {1: (0, 0), 2: (0, 4), 3: (0, 9),
                             4: (4, 0), 5: (4, 4), 6: (4, 9),
@@ -214,12 +212,6 @@ class RLStrategy:
 
     def reset(self):
         self.features_df['coin_position'] = 1.0
-        self.features_df['tpnl'] = 0.0
-
-        self.coin_position = 1.0
-        self.usdt_position = 0.0
-        self.tpnl = 1.0
-
 
         self.actions_history = []
         self.ongoing_orders = {}
@@ -228,33 +220,34 @@ class RLStrategy:
         for key in ['actions', 'logits', 'log_probs', 'values', 'entropy', 'observations', 'rewards']:
             self.trajectory[key] = []
 
-    def add_ass_features(self, receive_ts, price) -> None:
-
-        self.tpnl = self.usdt_position / price + self.coin_position
+    def add_ass_features(self, receive_ts, coin_position) -> None:
 
         self.features_df.loc[
             self.features_df['receive_ts'] == receive_ts,
-            ['coin_position', 'tpnl']
-        ] = (self.coin_position, self.tpnl)
+            ['coin_position']
+        ] = (coin_position)
 
     def get_features(self, receive_ts):
         # TODO: WHY ONLY 10 SECONDS AS A FEATURE WINDOW? TOO SMALL?
+        # breakpoint()
         features = self.features_df[
             (self.features_df['receive_ts'] <= pd.to_datetime(receive_ts, unit='s')) &
-            (self.features_df['receive_ts'] >= (pd.to_datetime(receive_ts, unit='s') - timedelta(seconds=10)))
+            (self.features_df['receive_ts'] >= (pd.to_datetime(receive_ts, unit='s') - timedelta(seconds=30)))
             ].drop(columns='receive_ts').values.T
 
-        if features.shape[1] < 300:
+        # print("FEATURES: %d, %d" % (features.shape[0], features.shape[1]))
+
+        if features.shape[1] < 30:
             try:
-                features = np.pad(features, ((0, 0), (300 - features.shape[1], 0)), mode='edge')
+                features = np.pad(features, ((0, 0), (30 - features.shape[1], 0)), mode='edge')
             except ValueError:
                 features = self.means
-        elif features.shape[1] > 300:
-            features = features[:, -300:]
+        elif features.shape[1] > 30:
+            features = features[:, -30:]
 
         return np.divide(features - self.means, self.stds, out=np.zeros_like(features), where=self.stds != 0)
 
-    def place_order(self, sim, action_id, receive_ts, asks, bids):
+    def place_order(self, sim, action_id, receive_ts, coin_position, asks, bids):
         if action_id == 0: 
             return 
         
@@ -265,7 +258,7 @@ class RLStrategy:
         self.ongoing_orders[bid_order.order_id] = (bid_order, 'LIMIT')
         self.ongoing_orders[ask_order.order_id] = (ask_order, 'LIMIT')
 
-        self.actions_history.append((receive_ts, self.coin_position, action_id))
+        self.actions_history.append((receive_ts, coin_position, action_id))
 
     def run(self, sim: Sim, mode: str, traj_size=1000) -> \
             Tuple[List[OwnTrade], List[MdUpdate], List[Union[OwnTrade, MdUpdate]], List[Order]]:
@@ -294,11 +287,13 @@ class RLStrategy:
         # last order timestamp
         prev_time = -np.inf
         # orders that have not been executed/canceled yet
-        prev_tpnl = None
         if mode != 'train':
             traj_size = 1e8
-        
-        est_price = np.inf
+
+        prev_coin_position = None
+        coin_position = 1.0
+        usdt_position = 0.0
+        coin_price = np.inf
       
         # breakpoint()  
         while len(self.trajectory['rewards']) < traj_size:
@@ -314,7 +309,7 @@ class RLStrategy:
                     if update.orderbook is not None:
                         best_bid, best_ask, asks, bids = update_best_positions(best_bid, best_ask, update, levels=True)
                     md_list.append(update)
-                    est_price = (best_bid + best_ask) / 2.0
+                    coin_price = (best_bid + best_ask) / 2.0
 
                 elif isinstance(update, OwnTrade):
                     trades_list.append(update)
@@ -326,65 +321,58 @@ class RLStrategy:
                     if self.post_only:
                         if order_type == 'LIMIT' and update.execute == 'TRADE':
                             if update.side == 'BID':
-                                self.coin_position += update.size
-                                self.usdt_position -= (1 + self.maker_fee) * update.price * update.size
+                                coin_position += update.size
+                                usdt_position -= (1 + self.maker_fee) * update.price * update.size
                             else:
-                                self.coin_position -= update.size
-                                self.usdt_position += (1 - self.maker_fee) * update.price * update.size
+                                coin_position -= update.size
+                                usdt_position += (1 - self.maker_fee) * update.price * update.size
                         elif order_type == 'MARKET':
                             if update.side == 'BID':
-                                self.coin_position += update.size
-                                self.usdt_position -= (1 + self.taker_fee) * update.price * update.size
+                                coin_position += update.size
+                                usdt_position -= (1 + self.taker_fee) * update.price * update.size
                             else:
-                                self.coin_position -= update.size
-                                self.usdt_position += (1 - self.taker_fee) * update.price * update.size
+                                coin_position -= update.size
+                                usdt_position += (1 - self.taker_fee) * update.price * update.size
                     else:
                         if update.execute == 'TRADE':
                             fee = self.maker_fee
                         else:
                             fee = self.taker_fee
                         if update.side == 'BID':
-                            self.coin_position += update.size
-                            self.usdt_position -= (1 + fee) * update.price * update.size
+                            coin_position += update.size
+                            usdt_position -= (1 + fee) * update.price * update.size
                         else:
-                            self.coin_position -= update.size
-                            self.usdt_position += (1 - fee) * update.price * update.size
+                            coin_position -= update.size
+                            usdt_position += (1 - fee) * update.price * update.size
 
-                    est_price = update.price
+                    coin_price = update.price
 
                 else:
                     assert False, 'invalid type of update!'
             #             self.results['receive_ts'].append(receive_ts)
-            #             self.results['coin_pos'].append(self.coin_position)
+            #             self.results['coin_pos'].append(coin_position)
             #             self.results['mid_price'].append((best_ask + best_bid) / 2)
 
-            self.add_ass_features(receive_ts, est_price)
+            self.add_ass_features(receive_ts, coin_position)
             
             if receive_ts - prev_time >= self.delay:
                 if mode == 'train':
-                    if prev_tpnl is None:
-                        prev_tpnl = 1.0
+                    if prev_coin_position is None:
                         prev_coin_position = 1.0
                     else:
-                        if (self.usdt_position / est_price + self.coin_position - prev_tpnl) > 1e-7:
-                            #reward = 0
-                            #reward = (self.usdt_position / est_price + self.coin_position - prev_tpnl) * 100000 # $1 PRICE CHANGE MEANS 0.1 REWARD
-                            reward = (self.usdt_position / est_price + self.coin_position - prev_tpnl) * 10000 # $1 PRICE CHANGE MEANS 0.1 REWARD
+                        if (coin_position - prev_coin_position) > 0: 
+                            # breakpoint()
+                            reward += 10000 * (coin_position - prev_coin_position)
+                        elif coin_position > 0.5: 
+                            reward = -0.01
+                        elif coin_position > 0.1:
+                            reward = -0.02
+                        elif coin_position > 0: 
+                            reward = -0.05
                         else: 
                             reward = -0.1
 
-                        """
-                        if self.coin_position <= 0.2: #TODO: 0.2 MAGIC NUMBER?
-                            reward =  - 0.5 * self.coin_position
-                            )
-                            print("reward: ", reward)
-                        else:
-                            reward = -0.1 #TODO: 0.1 MAGIC NUMBER?
-                            print("reward: ", reward)
-                        """ 
-
-                        prev_tpnl = self.usdt_position / est_price + self.coin_position
-                        prev_coin_position = self.coin_position
+                        prev_coin_position = coin_position
 
                         self.trajectory['observations'].append(features)
                         self.trajectory['rewards'].append(reward)
@@ -394,11 +382,11 @@ class RLStrategy:
 
                 # place order
                 features = self.get_features(receive_ts)
+
                 act = self.policy.act([features])
-                self.place_order(sim, act['actions'][0], receive_ts, asks, bids)
+                self.place_order(sim, act['actions'][0], receive_ts, coin_position, asks, bids)
 
                 prev_time = receive_ts
-
 
             to_cancel = []
             for ID, (order, order_type) in self.ongoing_orders.items():
@@ -416,8 +404,10 @@ class RLStrategy:
             print("[%s] MODE RUN IN RANGE [%s, %s]" % (mode.upper(), datetime.fromtimestamp(md_list[0].receive_ts), datetime.fromtimestamp(md_list[-1].receive_ts)))
         else:
             print("[%s] MODE BUT EMPTY RUN AT %s" % (mode.upper(), ))
-
-        return trades_list, md_list, updates_list, self.actions_history, self.trajectory
+        
+        # breakpoint()
+        res = (coin_position, usdt_position, coin_price, usdt_position/coin_price + coin_position)
+        return trades_list, md_list, updates_list, res, self.actions_history, self.trajectory
 
 
 class A2C:
@@ -473,7 +463,7 @@ class A2C:
         random_slice = random.choices(range(len(md)-traj_size), weights=weighted_random_index(len(md)-traj_size, method='exponential', bias=np.log(2.5)))[0] # RANDOM CHOICE IN [0:md_size - traj_size]
         print("[TRAIN] RANDOM SLICE: %d" % random_slice)
         sim = Sim(md[random_slice:], latency, datency)
-        trades_list, md_list, updates_list, actions_history, trajectory = strategy.run(sim, mode='train', traj_size=traj_size)
+        trades_list, md_list, updates_list, res, actions_history, trajectory = strategy.run(sim, mode='train', traj_size=traj_size)
 
         self.last_trajectories = trajectory
 
@@ -483,12 +473,15 @@ class A2C:
         gradient_norm = clip_grad_norm_(strategy.policy.model.parameters(), self.max_grad_norm)
         self.optimizer.step()
 
+        print("[TRAIN]: ", res)
+        return res
+
 
 def evaluate(strategy, md, latency, datency):
     strategy.reset()
     sim = Sim(md, latency, datency)
     with torch.no_grad():
-        trades_list, md_list, updates_list, actions_history, trajectory = strategy.run(sim, mode='test')
+        trades_list, md_list, updates_list, res, actions_history, trajectory = strategy.run(sim, mode='test')
    
-    return np.sum(trajectory['rewards']), strategy.tpnl, trajectory
+    return np.sum(trajectory['rewards']), res, trajectory
 
