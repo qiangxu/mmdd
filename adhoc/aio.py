@@ -30,7 +30,6 @@ from strategies.rl import (
     RLStrategy,
     A2C,
     ComputeValueTargets,
-    evaluate,
 )
 from utils.get_info import get_pnl, get_volumes
 from utils.load_data import load_md_from_csv
@@ -40,15 +39,18 @@ from tqdm import tqdm
 DEVICE = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 SEED=13
-N = 3000 # NUM OF EPOCHS
-S = 500_000 # TRAIN SIZE
-SS = 50_000 # EVALU SIZE, SHOULD BE CLOSE TO traj_size
+N = 300 # NUM OF EPOCHS
+S = 200_000 # TRAIN SIZE
+SS = 30_000 # EVALU SIZE, SHOULD BE CLOSE TO traj_size
 #assert SS < S / 10
-TRAJ_SIZE = 5000 # N * traj_size << S 
+TRAJ_SIZE = 50 # N * traj_size << S 
+#TRAJ_SIZE = 1797585 # N * traj_size << S 
 DELAY = pd.Timedelta(0.1, "s").total_seconds()
-HOLD_TIME = pd.Timedelta(10, "s").total_seconds()
+HOLD_TIME = pd.Timedelta(60, "s").total_seconds()
 LATENCY = pd.Timedelta(10, "ms").total_seconds()
 DATENCY = pd.Timedelta(10, "ms").total_seconds()
+N_ACTIONS = 10
+TRADE_SIZE = 0.01
 
 
 def preprocess_data(csv_books, csv_trades, num_rows=-1):
@@ -63,7 +65,7 @@ def train(dataset, features, means, stds):
     np.random.seed(SEED)
     torch.manual_seed(SEED)
 
-    model = A2CNetwork(n_actions=10, device=DEVICE).to(DEVICE)
+    model = A2CNetwork(n_actions=N_ACTIONS, num_features=features.shape[1]-1, num_layers=60, device=DEVICE).to(DEVICE)
     policy = Policy(model)
 
     strategy = RLStrategy(
@@ -75,7 +77,7 @@ def train(dataset, features, means, stds):
         DELAY,
         HOLD_TIME,
         [ComputeValueTargets(policy)],
-        trade_size=0.01,
+        trade_size=TRADE_SIZE,
         post_only=True,
         taker_fee=0.0004,
         maker_fee=-0.00004,
@@ -90,16 +92,16 @@ def train(dataset, features, means, stds):
     for i in tqdm(range(1, N+1)): 
         agent.train(
             strategy,
-            dataset[0:S],
+            dataset[0:-SS],
             latency=LATENCY, 
             datency=DATENCY,
             traj_size=TRAJ_SIZE,
         ) 
 
-        if ((i > 9) and (i-1) % 1 == 0) or i == N:
+        if ((i > 9) and (i-1) % 50 == 0) or i == N:
             reward, balance, trajectory = evaluate(
                 strategy,
-                dataset[S:],
+                dataset[-SS:],
                 latency=LATENCY, 
                 datency=DATENCY,
             )
@@ -130,7 +132,12 @@ def train(dataset, features, means, stds):
     return checkpoints
 
 def test(checkpoint, dataset, features, means, stds):
-    model = A2CNetwork(n_actions=10, device=DEVICE).to(DEVICE)
+    # breakpoint()
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+
+    model = A2CNetwork(n_actions=N_ACTIONS, num_features=features.shape[1]-1, num_layers=60, device=DEVICE).to(DEVICE)
     model.load_state_dict(torch.load(checkpoint))
     model.eval()
 
@@ -145,18 +152,42 @@ def test(checkpoint, dataset, features, means, stds):
         DELAY,
         HOLD_TIME,
         [ComputeValueTargets(policy)],
-        trade_size=0.001,
+        trade_size=TRADE_SIZE,
         post_only=True,
         taker_fee=0.0004,
         maker_fee=-0.00004,
     )
-
-    strategy.reset()
-    sim = Sim(
-        dataset, 
-        execution_latency=LATENCY,
+    reward, balance, trajectory = evaluate(
+        strategy,
+        dataset,
+        latency=LATENCY, 
         datency=DATENCY,
     )
+
+    res = {
+        "coin": balance[0],
+        "usdt": balance[1], 
+        "price": balance[2], 
+        "PnL": balance[3], 
+        "from": datetime.fromtimestamp(dataset[0].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"),
+        "to": datetime.fromtimestamp(dataset[-1].receive_ts).strftime("%Y-%m-%dT%H-%M-%S"), 
+        "delay": DELAY, 
+        "hold_time": HOLD_TIME, 
+        "traj_size": TRAJ_SIZE, 
+        "latency": LATENCY, 
+        "datency": DATENCY, 
+        }
+    print(res)
+    
+
+def evaluate(strategy, dataset, latency, datency):
+    # breakpoint()
+    strategy.reset()
+    sim = Sim(dataset, latency, datency)
+    with torch.no_grad():
+        trades_list, md_list, updates_list, balance, actions_history, trajectory = strategy.run(sim, mode='test')
+   
+    return np.sum(trajectory['rewards']), balance, trajectory
 
 def visualize(trades_list, md_list, updates_list, actions_history, trajectory):
     df = get_pnl(updates_list, post_only=True)
@@ -291,8 +322,6 @@ def prepare_features(features_snapshot):
         .reset_index()
         .rename(columns={"index": "receive_ts"})
     )
-    features["coin_position"] = 0.0
-
 
     means_dict = features.mean(numeric_only=True).to_dict()
     means = [means_dict.get(c, 0) for c in features.columns[1:]]
@@ -303,8 +332,10 @@ def prepare_features(features_snapshot):
 
 
 def main():
+    #1797585
     dataset = preprocess_data(
-        "../data/books.csv", "../data/trades.csv", num_rows=S+3*SS
+        "../data/books.csv", "../data/trades.csv", num_rows=S+10*SS
+        #"../data/books.csv", "../data/trades.csv"
     )
         
     print("TOTAL DATA UPDATES: %d" % len(dataset))
@@ -312,12 +343,12 @@ def main():
     # dataset = preprocess_data("../data/books.csv", "../data/trades.csv")
 
     features, means, stds = prepare_features("../data/features.pickle")
-    
-    checkpoints = train(dataset[0:S+SS], features, means, stds)
-    #checkpoint = "../models/rl_PnL_0_S_500000_SS_50000_datency_0.01_delay_0.1_epoch_i_900_from_2023-01-09T08-00-00_hold_time_10.0_latency_0.01_num_ecphos_3000_to_2023-01-13T16-21-33_traj_size_5000.pth"
-    trades_list, md_list, updates_list, actions_history, trajectory = test(checkpoint, dataset[S:S+2000], features, means, stds)
-    #breakpoint()
-    #df = get_pnl(updates_list, post_only=True)
+  
+    #for i in range(10):
+    i = 2 
+    checkpoints = train(dataset[0:S+(i+1)*SS], features, means, stds)
+        #checkpoint = "../models/rl_PnL_1.0118697884714454_S_200000_SS_30000_coin_-8.359999999999868_datency_0.01_delay_0.1_epoch_i_51_from_2023-01-09T08-00-00_hold_time_60.0_latency_0.01_num_ecphos_300_price_17416.55_to_2023-01-11T13-38-15_traj_size_50_usdt_163225.63876440004.pth"
+    test(checkpoints[-1], dataset[S+i*SS:S+(i+1)*SS], features, means, stds)
 
 if __name__ == "__main__":
     main()

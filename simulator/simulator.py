@@ -14,6 +14,7 @@ class Order:  # Our own placed order
     side: str
     size: float
     price: float
+    cost: float
 
         
 @dataclass
@@ -40,10 +41,18 @@ class OwnTrade:  # Execution of own placed order
     side: str
     size: float
     price: float
+    cost: float
     execute : str # BOOK or TRADE
 
 
     def __post_init__(self):
+        if self.side == "ASK":
+            #print("ORDER EXECUTION: %f -> %f, %s" % (self.cost, self.price, self.side))
+            pass
+        else: 
+            #print("ORDER EXECUTION: %f <- %f, %s" % (self.price, self.cost, self.side))
+            pass
+
         assert isinstance(self.side, str)
 
 @dataclass
@@ -270,7 +279,9 @@ class Sim:
                 self.last_order.order_id, 
                 self.last_order.side, 
                 self.last_order.size, 
-                executed_price, execute)
+                executed_price, 
+                self.last_order.cost,
+                execute)
             #add order to strategy update queue
             #there is no defaultsorteddict so I have to do this
             if not executed_order.receive_ts in self.strategy_updates_queue:
@@ -281,7 +292,6 @@ class Sim:
 
         #delete last order
         self.last_order = None
-
 
     def execute_orders(self) -> None:
         executed_orders_id = []
@@ -312,7 +322,7 @@ class Sim:
                     self.md.exchange_ts, #exchange ts
                     self.md.exchange_ts + self.datency, #receive ts
                     self.get_trade_id(), #trade id
-                    order_id, order.side, order.size, executed_price, execute)
+                    order_id, order.side, order.size, executed_price, order.cost, execute)
         
                 executed_orders_id.append(order_id)
 
@@ -327,9 +337,9 @@ class Sim:
             self.ready_to_execute_orders.pop(k)
 
 
-    def place_order(self, ts:float, size:float, side:str, price:float) -> Order:
+    def place_order(self, ts:float, size:float, side:str, price:float, cost:float=0.0) -> Order:
         #добавляем заявку в список всех заявок
-        order = Order(ts, ts + self.latency, self.get_order_id(), side, size, price)
+        order = Order(ts, ts + self.latency, self.get_order_id(), side, size, price, cost)
         self.actions_queue.append(order)
         return order
 
