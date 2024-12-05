@@ -47,10 +47,10 @@ class OwnTrade:  # Execution of own placed order
 
     def __post_init__(self):
         if self.side == "ASK":
-            #print("ORDER EXECUTION: %f -> %f, %s" % (self.cost, self.price, self.side))
+            #print("ORDER EXECUTION: %f -> %f, %s, %d" % (self.cost, self.price, self.side, self.order_id))
             pass
         else: 
-            #print("ORDER EXECUTION: %f <- %f, %s" % (self.price, self.cost, self.side))
+            #print("ORDER EXECUTION: %f <- %f, %s, %d" % (self.price, self.cost, self.side, self.order_id))
             pass
 
         assert isinstance(self.side, str)
@@ -298,7 +298,6 @@ class Sim:
         for order_id, order in self.ready_to_execute_orders.items():
 
             executed_price, execute = None, None
-
             #
             if order.side == 'BID' and order.price >= self.best_ask:
                 executed_price = order.price

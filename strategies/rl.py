@@ -54,13 +54,13 @@ class A2CNetwork(nn.Module):
         V - tensor, critic estimation, (batch_size)
     '''
 
-    def __init__(self, n_actions, num_features, num_layers, device="cpu"):
+    def __init__(self, n_actions, num_features, features_len, device="cpu"):
         super().__init__()
 
         self.device = device
         self.backbone = nn.Sequential(
             nn.Flatten(),
-            nn.Linear(num_layers * num_features, 256),
+            nn.Linear(features_len * num_features, 256),
             nn.ReLU()
         )
         self.logits_net = nn.Sequential(
@@ -167,7 +167,7 @@ class RLStrategy:
     """
 
     def __init__(self, policy: Policy, ess_df: pd.DataFrame, max_position: float,
-                 means, stds,
+                 means, stds, features_len,
                  delay: float, hold_time: Optional[float] = None, transforms=[],
                  trade_size=0.01, post_only=True, taker_fee=0.0004, maker_fee=-0.00004) -> None:
         """
@@ -178,15 +178,15 @@ class RLStrategy:
 
         self.policy = policy
         self.features_df = ess_df
-        self.means = np.broadcast_to(means, (60, means.shape[0])).T
-        self.stds = np.broadcast_to(stds, (60, stds.shape[0])).T
-        self.max_position = max_position
-
         self.delay = delay
+
         if hold_time is None:
             hold_time = min(delay * 5, pd.Timedelta(10, 's').total_seconds())
         self.hold_time = hold_time
-    
+        self.features_size = features_len
+        self.means = np.broadcast_to(means, (self.features_size, means.shape[0])).T
+        self.stds = np.broadcast_to(stds, (self.features_size, stds.shape[0])).T
+   
         """
         self.action_dict = {1: (0, 0), 2: (0, 4), 3: (0, 9),
                             4: (4, 0), 5: (4, 4), 6: (4, 9),
@@ -234,18 +234,18 @@ class RLStrategy:
         # TODO: WHY ONLY 10 SECONDS AS A FEATURE WINDOW? TOO SMALL?
         features = self.features_df[
             (self.features_df['receive_ts'] <= pd.to_datetime(receive_ts, unit='s')) &
-            (self.features_df['receive_ts'] >= (pd.to_datetime(receive_ts, unit='s') - timedelta(seconds=60)))
+            (self.features_df['receive_ts'] >= (pd.to_datetime(receive_ts, unit='s') - timedelta(seconds=self.features_size)))
             ].drop(columns='receive_ts').values.T
 
         # print("FEATURES: %d, %d" % (features.shape[0], features.shape[1]))
 
-        if features.shape[1] < 60:
+        if features.shape[1] < self.features_size:
             try:
-                features = np.pad(features, ((0, 0), (60 - features.shape[1], 0)), mode='edge')
+                features = np.pad(features, ((0, 0), (self.features_size - features.shape[1], 0)), mode='edge')
             except ValueError:
                 features = self.means
-        elif features.shape[1] > 60:
-            features = features[:, -60:]
+        elif features.shape[1] > self.features_size:
+            features = features[:, -self.features_size:]
 
         return np.divide(features - self.means, self.stds, out=np.zeros_like(features), where=self.stds != 0)
 
@@ -255,7 +255,7 @@ class RLStrategy:
        
         if action_id == 1: 
             ask_level, bid_level = self.action_dict[action_id]
-            p = 10 * (bids[bid_level] - bids[0]) + bids[0]
+            p = 4 * (bids[bid_level] - bids[0]) + bids[0]
             #bid_order = sim.place_order(receive_ts, self.trade_size, 'BID', bids[bid_level], cost=(asks[0] + bids[0])/2)
             bid_order = sim.place_order(receive_ts, self.trade_size, 'BID', p, cost=(asks[0] + bids[0])/2)
             self.ongoing_orders[bid_order.order_id] = (bid_order, 'LIMIT')
@@ -271,7 +271,7 @@ class RLStrategy:
 
             self.actions_history.append((receive_ts, coin_position, action_id))
 
-    def run(self, sim: Sim, mode: str, traj_size=1000) -> \
+    def run(self, sim: Sim, mode: str, traj_size=1000, unlimit=True) -> \
             Tuple[List[OwnTrade], List[MdUpdate], List[Union[OwnTrade, MdUpdate]], List[Order]]:
         """
             This function runs simulation
@@ -332,14 +332,15 @@ class RLStrategy:
                         self.ongoing_orders.pop(update.order_id)
 
                     if self.post_only:
-                        if order_type == 'LIMIT' and update.execute == 'TRADE':
+                        if order_type == 'LIMIT' and update.execute == 'BOOK':
                             if update.side == 'BID':
                                 coin_position += update.size
                                 usdt_position -= (1 + self.maker_fee) * update.price * update.size
                             else:
                                 coin_position -= update.size
                                 usdt_position += (1 - self.maker_fee) * update.price * update.size
-                        elif order_type == 'MARKET':
+                        elif order_type == 'LIMIT' and update.execute == 'TRADE':
+                        #elif order_type == 'MARKET':
                             # breakpoint()
                             if update.side == 'BID':
                                 coin_position += update.size
@@ -347,6 +348,9 @@ class RLStrategy:
                             else:
                                 coin_position -= update.size
                                 usdt_position += (1 - self.taker_fee) * update.price * update.size
+                        else: 
+                            pass
+                            # breakpoint()
                     else:
                         if update.execute == 'TRADE':
                             fee = self.maker_fee
@@ -379,14 +383,14 @@ class RLStrategy:
                     else:
                         p = (coin_position - prev_coin_position) + (usdt_position - prev_usdt_position) / coin_price
                         if coin_position == prev_coin_position: 
-                            reward = 0.02
-                        elif p > 1e-6: 
-                            # breakpoint()
-                            reward = p * 10_000_000
-                        elif p < -1e-6: 
-                            # breakpoint()
-                            reward = p * 10_000_000
+                            reward = 0.05
+                        elif p > (1e-4 * self.trade_size): 
+                            reward = p * 10_000 / self.trade_size
+                        elif p < -(1e-4 * self.trade_size):
+                            reward = p * 10_000 / self.trade_size 
                         else:
+                            # breakpoint()
+                            # DISENCOURAGE USELESS TRADING
                             reward = -0.1
 
                         """
@@ -414,8 +418,18 @@ class RLStrategy:
                 features = self.get_features(receive_ts)
 
                 act = self.policy.act([features])
-                self.place_order(sim, act['actions'][0], receive_ts, coin_position, asks, bids)
 
+                if unlimit:
+                    self.place_order(sim, act['actions'][0], receive_ts, coin_position, asks, bids)
+                else: 
+                    action_id = act['actions'][0]
+
+                    if action_id == 1:
+                       if usdt_position >= (1 + self.maker_fee) * coin_price * self.trade_size: 
+                            self.place_order(sim, act['actions'][0], receive_ts, coin_position, asks, bids)
+                    elif action_id == 2:
+                        if coin_position > self.trade_size:
+                            self.place_order(sim, act['actions'][0], receive_ts, coin_position, asks, bids)
                 prev_time = receive_ts
 
             to_cancel = []
@@ -436,9 +450,9 @@ class RLStrategy:
         #pd.DataFrame(self.trajectory['rewards']).plot.hist(bins=100).get_figure().savefig("rewards.pdf")
         balance = (coin_position, usdt_position, coin_price, usdt_position/coin_price + coin_position)
      
-        print(self.trajectory['rewards'])
+        # print(self.trajectory['rewards'])
         if len(trades_list) > 0: 
-            print("[%s] MODE RUN [%s,%s] IN RANGE [%s,%s]" % (mode.upper(), datetime.fromtimestamp(trades_list[0].receive_ts), datetime.fromtimestamp(trades_list[-1].receive_ts), datetime.fromtimestamp(md_list[0].receive_ts), datetime.fromtimestamp(md_list[-1].receive_ts)))
+            print("[%s] MODE (%d, %d) TRADES IN [%s, %s] IN RANGE [%s, %s]" % (mode.upper(), len([t for t in trades_list if t.side == "ASK"]), len([t for t in trades_list if t.side == "BID"]), datetime.fromtimestamp(trades_list[0].receive_ts), datetime.fromtimestamp(trades_list[-1].receive_ts), datetime.fromtimestamp(md_list[0].receive_ts), datetime.fromtimestamp(md_list[-1].receive_ts)))
             print("[%s] MODE GAIN %s" % (mode.upper(), balance))
             print("[%s] MODE PRICE CHANGE %f TO %f" % (mode.upper(), trades_list[0].price, trades_list[-1].price))
         
