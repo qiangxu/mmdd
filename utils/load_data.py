@@ -92,9 +92,9 @@ def load_md_from_csv(csv_books, csv_trades, num_rows=-1) -> List[MdUpdate]:
         df_books = pd.read_csv(csv_books, nrows=num_rows)
     else: 
         df_books = pd.read_csv(csv_books)
-
-    df_books['receive_ts'] = pd.to_datetime(df_books['receive_ts']).map(pd.Timestamp.timestamp)
-    df_books['exchange_ts'] = pd.to_datetime(df_books['exchange_ts']).map(pd.Timestamp.timestamp)
+    
+    df_books['receive_ts'] = pd.to_datetime(df_books['receive_ts'], utc=True).map(pd.Timestamp.timestamp)
+    df_books['exchange_ts'] = pd.to_datetime(df_books['exchange_ts'], utc=True).map(pd.Timestamp.timestamp)
     receive_ts = df_books.receive_ts.values
     exchange_ts = df_books.exchange_ts.values
     asks = [list(zip(df_books[f"ask_price_{i}"], df_books[f"ask_vol_{i}"])) for i in range(10)]
@@ -109,8 +109,8 @@ def load_md_from_csv(csv_books, csv_trades, num_rows=-1) -> List[MdUpdate]:
     else:
         df_trades = pd.read_csv(csv_trades)
 
-    df_trades['receive_ts'] = pd.to_datetime(df_trades['receive_ts']).map(pd.Timestamp.timestamp)
-    df_trades['exchange_ts'] = pd.to_datetime(df_trades['exchange_ts']).map(pd.Timestamp.timestamp)
+    df_trades['receive_ts'] = pd.to_datetime(df_trades['receive_ts'], utc=True).map(pd.Timestamp.timestamp)
+    df_trades['exchange_ts'] = pd.to_datetime(df_trades['exchange_ts'], utc=True).map(pd.Timestamp.timestamp)
     df_trades = df_trades[['exchange_ts', 'receive_ts', 'aggro_side', 'size', 'price']].sort_values(
         ["exchange_ts", 'receive_ts'])
     receive_ts = df_trades.receive_ts.values

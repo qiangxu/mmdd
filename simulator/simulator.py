@@ -55,6 +55,9 @@ class OwnTrade:  # Execution of own placed order
 
         assert isinstance(self.side, str)
 
+    def get_price(self):
+        return self.price
+
 @dataclass
 class OrderbookSnapshotUpdate:  # Orderbook tick snapshot
     exchange_ts : float
@@ -69,6 +72,14 @@ class MdUpdate:  # Data of a tick
     receive_ts : float
     orderbook: Optional[OrderbookSnapshotUpdate] = None
     trade: Optional[AnonTrade] = None
+    def get_price(self):
+        if self.trade is not None: 
+            return self.trade.price
+        elif self.orderbook is not None: 
+            return (self.orderbook.asks[0][0] + self.orderbook.bids[0][0]) / 2.0
+        else:
+            breakpoint()
+            return 0.0
 
 
 def update_best_positions(best_bid, best_ask, md:MdUpdate, levels:bool = False) -> Tuple[float, float]:
