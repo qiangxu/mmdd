@@ -149,7 +149,6 @@ class ComputeValueTargets:
 
         value_targets = [self.policy.act(latest_observation)["values"]]
 
-        print("[TRAIN] REWARDS: ", np.sum(trajectory['rewards']))
 
         for step in range(len(trajectory['values']) - 2, -1, -1):
             value_targets.append(
@@ -200,6 +199,7 @@ class RLStrategy:
         self.action_dict = [0, 3, 5, 7]
         self.actions_history = []
         self.ongoing_orders = {}
+        self.trades_list = []
 
         self.trajectory = {}
         for key in ['actions', 'logits', 'log_probs', 'values', 'entropy', 'observations', 'rewards']:
@@ -219,6 +219,7 @@ class RLStrategy:
 
         self.actions_history = []
         self.ongoing_orders = {}
+        self.trades_list = []
 
         self.trajectory = {}
         for key in ['actions', 'logits', 'log_probs', 'values', 'entropy', 'observations', 'rewards']:
@@ -282,14 +283,10 @@ class RLStrategy:
 
         return reward
 
-    def get_reward_f3(self, coin_position, usdt_position, coin_price, prev_coin_position, prev_usdt_position, prev_coin_price, trades_list, receive_ts): 
+    def get_reward_f3(self, coin_position, usdt_position, coin_price, prev_coin_position, prev_usdt_position, prev_coin_price, receive_ts): 
         p = (coin_position - prev_coin_position) + (usdt_position - prev_usdt_position) / coin_price
-        trades = [t for t in trades_list if t.receive_ts < receive_ts and t.receive_ts > receive_ts - self.delay]
+        trades = [t for t in self.trades_list if t.receive_ts < receive_ts and t.receive_ts > receive_ts - self.delay]
 
-        if coin_position != prev_coin_position:
-            # breakpoint()
-            pass
-        #    reward = len(trades) * 20
         if len(trades) > 0:
             # breakpoint()
             reward = len(trades) * self.trade_size * 2 * 1000
@@ -301,24 +298,17 @@ class RLStrategy:
             reward = -1
 
         return reward
-    def get_reward_f4(self, coin_position, usdt_position, coin_price, prev_coin_position, prev_usdt_position, prev_coin_price, trades_list, receive_ts, ): 
-        p = (coin_position - prev_coin_position) + (usdt_position - prev_usdt_position) / coin_price
-        trades = [t for t in trades_list if t.receive_ts < receive_ts and t.receive_ts > receive_ts - self.delay]
+    def get_reward_f4(self, receive_ts): 
+        trades = [t for t in self.trades_list if t.receive_ts < receive_ts and t.receive_ts > receive_ts - self.delay]
         
-        trades_ask = [t for t in trades if t.side == "ASK" and t.receive_ts < receive_ts and t.receive_ts > receive_ts - self.hold_time]
-        trades_bid = [t for t in trades if t.side == "BID" and t.receive_ts < receive_ts and t.receive_ts > receive_ts - self.hold_time]
-
         orders = [o[0] for o in self.ongoing_orders.values() if o[0].place_ts < receive_ts and o[0].place_ts > receive_ts - self.hold_time]
         orders_ask = [o for o in orders if o.side == "ASK"]
         orders_bid = [o for o in orders if o.side == "BID"]
        
         actions = [a for a in self.actions_history if a[0] < receive_ts and a[0] > receive_ts - self.hold_time]
-        actions_ask = [a for a in actions if self.action_dict[a[2]//4 % 4] != 0]
-        actions_bid = [a for a in actions if self.action_dict[a[2] % 4] != 0]
+        actions_ask = [a for a in actions if self.action_dict[a[3]//4 % 4] != 0]
+        actions_bid = [a for a in actions if self.action_dict[a[3] % 4] != 0]
         
-        #print("ASK: %d %d %d" % (len(orders_ask), len(trades_ask), len(actions_ask)))
-        #print("BID: %d %d %d" % (len(orders_bid), len(trades_bid), len(actions_bid)))
-
         if len(trades) > 0:
             # breakpoint()
             return len(trades) * self.trade_size * 2 * 1000
@@ -330,24 +320,103 @@ class RLStrategy:
             if (len(actions_bid) > 0) and (len(actions_bid))/(len(actions_bid) + 10) * len(orders_bid) / len(actions_bid) > 0.45:
                 reward += -500 / self.hold_time * self.delay
             return reward 
+    
+    def print_run_res(self, mode, coin_position, usdt_position, md_list, updates_list): 
+        # breakpoint()
+        ask_orders = [t for t in self.trades_list if t.side == "ASK"]
+        bid_orders = [t for t in self.trades_list if t.side == "BID"]
 
-    def place_order(self, sim, action_id, receive_ts, coin_position, asks, bids):
+        gain_ask = (sum([(t.price - t.cost) for t in ask_orders]), len(ask_orders))
+        gain_bid = (sum([(t.cost - t.price) for t in bid_orders]), len(bid_orders))
+
+        positions_coin = (
+                min([a[1] for a in self.actions_history]),
+                coin_position,
+                max([a[1] for a in self.actions_history])
+                )
+
+        positions_usdt = (
+                min([a[2] for a in self.actions_history]),
+                usdt_position,
+                max([a[2] for a in self.actions_history])
+                )
+
+        print("[%s] REWARDS %d\n\t%s" % (mode.upper(), np.sum(self.trajectory['rewards']), str(self.trajectory['rewards'])))
+
+        if len(self.trades_list):
+            print("[%s] TRADE RANGE [%s, %s], DATA RANGE [%s, %s]" % (
+                mode.upper(), 
+                datetime.utcfromtimestamp(self.trades_list[0].receive_ts), 
+                datetime.utcfromtimestamp(self.trades_list[-1].receive_ts), 
+                datetime.utcfromtimestamp(md_list[0].receive_ts), 
+                datetime.utcfromtimestamp(md_list[-1].receive_ts)
+                )
+            )
+
+        print("[%s] TRADES (%d, %d), ACTIONS [%s]" % (
+            mode.upper(), 
+            gain_ask[1], 
+            gain_bid[1], 
+            str(sorted(dict(Counter([a[3] for a in self.actions_history])).items(), reverse=True)),
+            )
+        )
+        if len(updates_list): 
+            print("[%s] PRICE FROM %f TO %f" % (
+                mode.upper(), 
+                updates_list[0].get_price(), 
+                updates_list[-1].get_price()
+                )
+            )
+
+        print("[%s] GAIN/ASK %f / %d, GAIN/BID %f / %d" % (
+            mode.upper(), 
+            gain_ask[0], gain_ask[1], 
+            gain_bid[0], gain_bid[1]
+            )
+        )
+
+        print("[%s] POSITION/COIN %s, POSITIOIN/USDT %s" % (
+            mode.upper(), 
+            str(positions_coin),
+            str(positions_usdt)
+            )
+        )
+        return {"_gain": {"ask": gain_ask, "bid": gain_bid}, 
+                "_position": {"coin": positions_coin, "usdt": positions_usdt}}
+
+    def place_order(self, sim, mode, action_id, receive_ts, coin_position, usdt_position, asks, bids):
         ask_level = self.action_dict[(action_id // 4) % 4]
         bid_level = self.action_dict[action_id % 4] 
 
         #print("ACTION %d: (%d, %d)" % (action_id, ask_level, bid_level))
         #breakpoint() 
+
+        trades_ask = [t for t in self.trades_list if t.side == "ASK"]
+
+        trades_bid = [t for t in self.trades_list if t.side == "BID"]
+
+
         if bid_level != 0:
             p = bids[0] * (1 - 0.0001 * bid_level - self.maker_fee)
-            bid_order = sim.place_order(receive_ts, self.trade_size, 'BID', p, cost=(asks[0] + bids[0])/2)
+            if mode == "test" and len(trades_ask) > len(trades_bid): 
+                #print("# OF ASKS/BIDS(x2): %d/%d" % (len(trades_ask), len(trades_bid)))
+                bid_order = sim.place_order(receive_ts, 2 * self.trade_size, 'BID', p, cost=(asks[0] + bids[0])/2)
+            else: 
+                bid_order = sim.place_order(receive_ts, self.trade_size, 'BID', p, cost=(asks[0] + bids[0])/2)
             self.ongoing_orders[bid_order.order_id] = (bid_order, 'LIMIT')
 
         if ask_level != 0:
             p = asks[0] * (1 + 0.0001 * ask_level + self.maker_fee)
-            ask_order = sim.place_order(receive_ts, self.trade_size, 'ASK', p, cost=(asks[0] + bids[0])/2)
-            self.ongoing_orders[ask_order.order_id] = (ask_order, 'LIMIT')
+            if mode == "test" and len(trades_bid) > len(trades_ask):
+                #print("# OF ASKS(x2)/BIDS: %d/%d" % (len(trades_ask), len(trades_bid)))
+                ask_order = sim.place_order(receive_ts, 2 * self.trade_size, 'ASK', p, cost=(asks[0] + bids[0])/2)
+            else: 
+                ask_order = sim.place_order(receive_ts, self.trade_size, 'ASK', p, cost=(asks[0] + bids[0])/2)
 
-        self.actions_history.append((receive_ts, coin_position, action_id))
+            self.ongoing_orders[ask_order.order_id] = (ask_order, 'LIMIT')
+        
+        #
+        self.actions_history.append((receive_ts, coin_position, usdt_position, action_id))
 
     def run(self, sim: Sim, mode: str, traj_size=1000, unlimit=True) -> \
             Tuple[List[OwnTrade], List[MdUpdate], List[Union[OwnTrade, MdUpdate]], List[Order]]:
@@ -385,7 +454,6 @@ class RLStrategy:
         coin_position = 1.0
         usdt_position = 0.0
         coin_price = 0.0
-        max_position = 1.0
       
         #while (len(self.trajectory['rewards']) < traj_size) and (coin_position > 0):
         while (len(self.trajectory['rewards']) < traj_size):
@@ -405,7 +473,7 @@ class RLStrategy:
                     md_list.append(update)
 
                 elif isinstance(update, OwnTrade):
-                    trades_list.append(update)
+                    self.trades_list.append(update)
                     # delete executed trades from the dict
                     if update.order_id in self.ongoing_orders.keys():
                         _, order_type = self.ongoing_orders[update.order_id]
@@ -464,10 +532,9 @@ class RLStrategy:
                         prev_coin_price = updates_list[0].get_price()
                     else:
                         #reward = self.get_reward_f2(coin_position, usdt_position, coin_price, prev_coin_position, prev_usdt_position, prev_coin_price) 
-                        #reward = self.get_reward_f3(coin_position, usdt_position, coin_price, prev_coin_position, prev_usdt_position, prev_coin_price, trades_list, receive_ts) 
-                        reward = self.get_reward_f4(coin_position, usdt_position, coin_price, prev_coin_position, prev_usdt_position, prev_coin_price, trades_list, receive_ts) 
+                        #reward = self.get_reward_f3(coin_position, usdt_position, coin_price, prev_coin_position, prev_usdt_position, prev_coin_price, receive_ts) 
+                        reward = self.get_reward_f4(receive_ts) 
 
-                        max_position = max(coin_position, max_position)
 
                         prev_coin_position = coin_position
                         prev_usdt_position = usdt_position
@@ -485,16 +552,16 @@ class RLStrategy:
                 act = self.policy.act([features])
 
                 if unlimit:
-                    self.place_order(sim, act['actions'][0], receive_ts, coin_position, asks, bids)
+                    self.place_order(sim, mode, act['actions'][0], receive_ts, coin_position, usdt_position, asks, bids)
                 else: 
                     action_id = act['actions'][0]
 
                     if action_id == 1:
                        if usdt_position >= (1 + self.maker_fee) * coin_price * self.trade_size: 
-                            self.place_order(sim, act['actions'][0], receive_ts, coin_position, asks, bids)
+                            self.place_order(sim, mode, act['actions'][0], receive_ts, coin_position, usdt_positon, asks, bids)
                     elif action_id == 2:
                         if coin_position > self.trade_size:
-                            self.place_order(sim, act['actions'][0], receive_ts, coin_position, asks, bids)
+                            self.place_order(sim, mode, act['actions'][0], receive_ts, coin_position, usdt_position, asks, bids)
                 prev_time = receive_ts
 
             to_cancel = []
@@ -512,38 +579,11 @@ class RLStrategy:
             for transform in self.transforms:
                 transform(self.trajectory, [features])
 
-        #pd.DataFrame(self.trajectory['rewards']).plot.hist(bins=100).get_figure().savefig("rewards.pdf")
          
-        print(self.trajectory['rewards'])
+        run_res = self.print_run_res(mode, coin_position, usdt_position, md_list, updates_list)
         
-        #ASK
-        mid_price = (updates_list[0].get_price() + updates_list[-1].get_price()) / 2
 
-         
-        ask_orders = [t for t in trades_list if t.side == "ASK"]
-        if len(ask_orders):
-            gain_per_ask = sum([(t.price - t.cost) for t in ask_orders]) / len(ask_orders) / mid_price
-        else:
-            gain_per_ask = 0
-
-        bid_orders = [t for t in trades_list if t.side == "BID"]
-        if len(bid_orders): 
-            gain_per_bid = sum([(t.cost - t.price) for t in bid_orders]) / len(bid_orders) / mid_price
-        else:
-            gain_per_bid = 0
-
-        gain_ratio = sum([(t.price - t.cost) for t in ask_orders]) / mid_price + sum([(t.cost - t.price) for t in bid_orders]) / mid_price
-        perf = (coin_position, usdt_position, gain_ratio, (len(ask_orders), gain_per_ask), (len(bid_orders), gain_per_bid), len(trades_list) / len(self.actions_history))
-
-        if len(trades_list) > 0: 
-            print("[%s] MODE (%d, %d) TRADES IN [%s, %s] IN RANGE [%s, %s]" % (mode.upper(), len([t for t in trades_list if t.side == "ASK"]), len([t for t in trades_list if t.side == "BID"]), datetime.utcfromtimestamp(trades_list[0].receive_ts), datetime.utcfromtimestamp(trades_list[-1].receive_ts), datetime.utcfromtimestamp(md_list[0].receive_ts), datetime.utcfromtimestamp(md_list[-1].receive_ts)))
-            print("[%s] MODE PERFORMANCE %s" % (mode.upper(), perf))
-            print("[%s] MODE PRICE CHANGE FROM %f TO %f" % (mode.upper(), updates_list[0].get_price(), updates_list[-1].get_price()))
-       
-        print("[%s] TRADES: " % mode.upper(), len(trades_list))
-        print("[%s] ACTIONS: " % mode.upper(), dict(sorted(dict(Counter([a[2] for a in self.actions_history])).items(), reverse=True)))
-
-        return trades_list, md_list, updates_list, perf, self.actions_history, self.trajectory
+        return md_list, updates_list, run_res
 
 
 class A2C:
@@ -599,16 +639,16 @@ class A2C:
         random_slice = random.choices(range(len(md)-traj_size), weights=weighted_random_index(len(md)-traj_size, method='exponential', bias=np.log(2.5)))[0] # RANDOM CHOICE IN [0:md_size - traj_size]
         print("[TRAIN] RANDOM SLICE %d" % random_slice)
         sim = Sim(md[random_slice:], latency, datency)
-        trades_list, md_list, updates_list, perf, actions_history, trajectory = strategy.run(sim, mode='train', traj_size=traj_size)
+        md_list, updates_list, run_res = strategy.run(sim, mode='train', traj_size=traj_size)
 
-        self.last_trajectories = trajectory
+        self.last_trajectories = strategy.trajectory
 
-        loss = self.loss(trajectory)
+        loss = self.loss(strategy.trajectory)
         self.optimizer.zero_grad()
         loss.backward()
         gradient_norm = clip_grad_norm_(strategy.policy.model.parameters(), self.max_grad_norm)
         self.optimizer.step()
-        return perf 
+        return run_res
 
 
 

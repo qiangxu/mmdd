@@ -57,12 +57,11 @@ TAKER_FEE=0.0004
 MAKER_FEE=0.00004
 
 
-def get_tag(perf, strategy, datetime_from, datetime_to, epoch_i): 
+def get_tag(run_res, strategy, datetime_from, datetime_to, epoch_i): 
     tag_fields = ["PNL", "COIN", "USDT", "PRICE", "DELAY", "LATENCY", "DATENCY", "HOLD_TIME", "TRAJ_SIZE", "S", "SS", "TRADE_SIZE", "FEATURES_LEN", "MAX_EPOCHS", "EPOCH_NO", "FROM", "TO"]
     res = {
-        "COIN": "%06f" % perf[0],
-        "USDT": "%02f" % perf[1], 
-        "PNL": "%06f" % perf[2], 
+        "COIN": "%02f" % run_res["_position"]["coin"][1],
+        "USDT": "%02f" % run_res["_position"]["usdt"][1],
         "FROM": datetime.utcfromtimestamp(datetime_from).strftime("%Y%m%dT%H%M%S"),
         "TO": datetime.utcfromtimestamp(datetime_to).strftime("%Y%m%dT%H%M%S"), 
         "DELAY": DELAY, 
@@ -131,13 +130,13 @@ def train(dataset, features, means, stds):
 
         if ((i > 9) and (i-1) % 100 == 0) or i == N:
             # breakpoint()
-            reward, perf, trajectory = evaluate(
+            res = evaluate(
                 strategy,
                 dataset[-SS:],
                 latency=LATENCY, 
                 datency=DATENCY,
             )
-            tag = get_tag(perf, strategy, dataset[0].receive_ts, dataset[-1].receive_ts, i)
+            tag = get_tag(res, strategy, dataset[0].receive_ts, dataset[-1].receive_ts, i)
             
             checkpoint = "../models/%s.pth" % tag
             checkpoints.append(checkpoint)
@@ -158,7 +157,7 @@ def test(checkpoint, dataset, features, means, stds):
 
     strategy = get_strategy(policy, features, means, stds)
 
-    reward, perf, trajectory = evaluate(
+    res = evaluate(
         strategy,
         dataset,
         latency=LATENCY, 
@@ -170,9 +169,9 @@ def evaluate(strategy, dataset, latency, datency, unlimit=True):
     strategy.reset()
     sim = Sim(dataset, latency, datency)
     with torch.no_grad():
-        trades_list, md_list, updates_list, perf, actions_history, trajectory = strategy.run(sim, mode='test', unlimit=unlimit)
+        md_list, updates_list, run_res = strategy.run(sim, mode='test', unlimit=unlimit)
    
-    return np.sum(trajectory['rewards']), perf, trajectory
+    return run_res
 
 def visualize(trades_list, md_list, updates_list, actions_history, trajectory):
     df = get_pnl(updates_list, post_only=True)
@@ -346,16 +345,16 @@ def main():
     
     for time_range in [
         #FLUCTUATE
-        #["2023-01-19 04:00:00", "2023-01-19 05:00:00"],
-        #["2023-01-19 05:00:00", "2023-01-19 06:00:00"],
+        ["2023-01-19 04:00:00", "2023-01-19 05:00:00"],
+        ["2023-01-19 05:00:00", "2023-01-19 06:00:00"],
         ["2023-01-19 06:00:00", "2023-01-19 07:00:00"],
         ["2023-01-19 07:00:00", "2023-01-19 08:00:00"],
         ["2023-01-19 08:00:00", "2023-01-19 09:00:00"],
         ["2023-01-19 09:00:00", "2023-01-19 10:00:00"],
         ["2023-01-19 10:00:00", "2023-01-19 11:00:00"],
         ["2023-01-19 11:00:00", "2023-01-19 12:00:00"],
-        #["2023-01-15 04:00:00", "2023-01-15 12:00:00"],
-        #["2023-01-13 00:00:00", "2023-01-13 08:00:00"],
+        ["2023-01-15 04:00:00", "2023-01-15 12:00:00"],
+        ["2023-01-13 00:00:00", "2023-01-13 08:00:00"],
         #RISEUP
         #["2023-01-20 16:00:00", "2023-01-22 04:00:00"],
         #["2023-01-13 16:00:00", "2023-01-14 04:00:00"],
@@ -376,6 +375,7 @@ def main():
         checkpoints = train(DA + DD[0:SS], features, means, stds)
         test(checkpoints[-1], DD, features, means, stds)
         print(time_range)
+        breakpoint()
         pass
 
 
