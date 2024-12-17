@@ -649,6 +649,3 @@ class A2C:
         gradient_norm = clip_grad_norm_(strategy.policy.model.parameters(), self.max_grad_norm)
         self.optimizer.step()
         return run_res
-
-
-
