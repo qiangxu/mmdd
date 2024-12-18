@@ -56,6 +56,9 @@ def aggregate_orderbook(input_file):
                     aggregated_data['asks'][rounded_price] += quantity
                    
                 bids = sorted(aggregated_data['bids'].items(), reverse=True)
+                non_zero_id = next((i for i, bid in enumerate(bids) if bid[1] != 0), len(bids))
+                bids = bids[non_zero_id:]
+
                 for i in range(10):
                     if len(bids) > i: 
                         output["bid_price_%d" % i] = bids[i][0]
@@ -65,6 +68,9 @@ def aggregate_orderbook(input_file):
                         output["bid_vol_%d" % i] = 0
 
                 asks = sorted(aggregated_data['asks'].items())
+                non_zero_id = next((i for i, ask in enumerate(asks) if ask[1] != 0), len(asks))
+                asks = asks[non_zero_id:]
+
                 for i in range(10):
                     if len(asks) > i: 
                         output["ask_price_%d" % i] = asks[i][0]
@@ -72,14 +78,18 @@ def aggregate_orderbook(input_file):
                     else: 
                         output["ask_price_%d" % i] = asks[-1][0] + 0.1
                         output["ask_vol_%d" % i] = 0
-
-                output["receive_ts"] = entry['timestamp']
-                output["exchange_ts"] = entry['timestamp']
+                
+                assert output['ask_price_0'] >= output['bid_price_0']
+                output["receive_ts"] = entry['datetime']
+                output["exchange_ts"] = entry['datetime']
 
                 outputs.append(output)
             except json.JSONDecodeError:
                 print(f"跳过无效的JSON行: {line}")
-    
+            
+            except Exception as e:
+                breakpoint()
+                print(e)
     return outputs
 
 def main():
@@ -96,8 +106,8 @@ def main():
     # 执行聚合
     result = aggregate_orderbook(input_file)
 
-    breakpoint()
     df = pd.DataFrame(result)
+    df['receive_ts'] = pd.to_datetime(df['receive_ts']).dt.floor('s')
     df.to_csv(os.path.splitext(input_file)[0] + '.csv')
     
 if __name__ == "__main__":
