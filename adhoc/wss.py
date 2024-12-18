@@ -7,6 +7,7 @@ import json
 import threading
 import os
 from datetime import datetime
+import time
 
 class BinanceOrderbookWebSocket:
     def __init__(self, symbol='btcusdt', log_dir='./orderbook_logs'):
@@ -41,6 +42,7 @@ class BinanceOrderbookWebSocket:
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{self.symbol}_orderbook_{timestamp}.json"
+        print(f"Created Log {filename}")
         return os.path.join(self.log_dir, filename)
 
     def _write_message_to_file(self, message):
@@ -53,7 +55,8 @@ class BinanceOrderbookWebSocket:
                 with open(self.log_file, 'a', encoding='utf-8') as f:
                     # 添加时间戳和换行
                     log_entry = json.dumps({
-                        'timestamp': datetime.now().isoformat(),
+                        'datetime': datetime.utcnow().isoformat(),
+                        'timestamp': time.time() * 1000,
                         'message': json.loads(message)
                     }) + '\n'
                     f.write(log_entry)
@@ -66,8 +69,6 @@ class BinanceOrderbookWebSocket:
         """
         data = json.loads(message)
         self._write_message_to_file(message)
-        
-        data = json.loads(message)
       
 
     def on_error(self, ws, error):
